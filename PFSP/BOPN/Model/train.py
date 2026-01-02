@@ -3,7 +3,7 @@
 
 DEBUG_MODE = False
 USE_CUDA = not DEBUG_MODE
-CUDA_DEVICE_NUM = 2
+CUDA_DEVICE_NUM = 3
 
 
 ##########################################################################################
@@ -25,22 +25,25 @@ sys.path.insert(0, "../..")  # for utils
 import logging
 from utils.utils import create_logger, copy_all_src
 
-from ATSPTrainer import ATSPTrainer as Trainer
+from PFSPTrainer import PFSPTrainer as Trainer
 
 
 ##########################################################################################
 # parameters
 
-node_cnt = 100
-trajectory = node_cnt # node_cnt과 같거나 작아야 함
+job_size = 100
+machine_size = 20
+trajectory = job_size # node_cnt과 같거나 작아야 함
 
 env_params = {
-    'node_cnt': node_cnt,
+    'job_size': job_size,
+    'machine_size': machine_size,
     'trajectory_size': trajectory,
 }
 
 model_params = {
-    'node_cnt': node_cnt,
+    'job_size': job_size,
+    'machine_size': machine_size,
     'trajectory_size': trajectory,
     'embedding_dim': 256,
     'sqrt_embedding_dim': 256**(1/2),
@@ -88,7 +91,7 @@ trainer_params = {
         },
     },
     'model_load': {
-        'enable': True,  # enable loading pre-trained model
+        'enable': False,  # enable loading pre-trained model
         'path': './result/20251229_105625_train__tsp_n20',  # directory path of pre-trained model and log files saved.
         'epoch': 1000,  # epoch version of pre-trained model to laod.
 

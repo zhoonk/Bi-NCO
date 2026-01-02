@@ -173,19 +173,30 @@ class PFSPTrainer:
             state, reward, done, route = self.env.step(selected)
             prob_list = torch.cat((prob_list, prob[:, :, None]), dim=2)
 
-        # Loss
-        ###############################################
-        advantage = reward - reward.float().mean(dim=1, keepdims=True)
-        # shape: (batch, pomo)
-        log_prob = prob_list.log().sum(dim=2)
-        # size = (batch, pomo)
-        loss = -advantage * log_prob  # Minus Sign: To Increase REWARD
-        # shape: (batch, pomo)
+        log_prob = prob_list.log().mean(dim=2)
+
+        B, N = reward.shape
+        mid = N // 2  # N이 짝수라고 가정(홀수여도 mid 기준으로 앞/뒤가 나뉨)
+
+        # # 1) 앞 절반 [0, mid)
+        idx_forward = reward[:, :mid].argmax(dim=1)              # (B,)
+        best_lp_forward = log_prob.gather(1, idx_forward[:, None]).squeeze(1)  # (B,)        
+
+        # # 2) 뒤 절반 [mid, N)
+        idx_backward = reward[:, mid:].argmax(dim=1) + mid          # (B,)  (0~N-mid-1)
+        best_lp_backward = log_prob.gather(1, idx_backward[:, None]).squeeze(1) # (B,)
+
+        # # (옵션) (B, 2)로 묶어서 반환
+        best_log_prob = torch.stack([best_lp_forward, best_lp_backward], dim=1)  # (B, 2)
+
+        # # size = (batch, pomo)
+        loss = -best_log_prob  # Minus Sign: To Increase REWARD
+        # # shape: (batch, pomo)
         loss_mean = loss.mean()
 
         # Score
         ###############################################
-        max_pomo_reward, _ = (100*reward).max(dim=1)  # get best results from pomo
+        max_pomo_reward, _ = reward.max(dim=1)  # get best results from pomo
         score_mean = -max_pomo_reward.float().mean()  # negative sign to make positive value
 
         # Step & Return
@@ -193,6 +204,7 @@ class PFSPTrainer:
         self.model.zero_grad()
         loss_mean.backward()
         self.optimizer.step()
+        
         return score_mean.item(), loss_mean.item()
 
 

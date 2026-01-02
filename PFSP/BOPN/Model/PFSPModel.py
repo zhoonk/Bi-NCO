@@ -122,6 +122,23 @@ class Cross_Encoder(nn.Module):
         self.end = nn.Parameter(torch.empty(1, 1, embedding_dim))
         self.end.data.uniform_(-1, 1)
 
+    def compute_normalized_matrices(self, data):
+
+        B, N, _ = data.shape
+    
+        # 배치마다 min, max 계산 (dim=(1,2)로 전체 N x N에서)
+        min_vals = data.view(B, -1).min(dim=1)[0].view(B, 1, 1)
+        max_vals = data.view(B, -1).max(dim=1)[0].view(B, 1, 1)
+
+        # 0으로 나눔 방지 (max == min일 경우)
+        range_vals = max_vals - min_vals
+        range_vals[range_vals == 0] = 1.0
+
+        # 정규화
+        scaled_data = (data - min_vals) / range_vals
+        
+        return scaled_data
+    
     def forward(self, data):
         # col_emb.shape: (batch, col_cnt, embedding)
         # row_emb.shape: (batch, row_cnt, embedding)
@@ -129,8 +146,10 @@ class Cross_Encoder(nn.Module):
         start = self.start.repeat(data.size(0), 1, 1)
         end = self.end.repeat(data.size(0), 1, 1)
 
-        out1 = self.embedding1(data.float())
-        out2 = self.embedding2(data.float())
+        scaled_data = self.compute_normalized_matrices(data)
+
+        out1 = self.embedding1(scaled_data.float())
+        out2 = self.embedding2(scaled_data.float())
 
         d_out1 = torch.cat((start, out1), dim=1)
         d_out2 = torch.cat((end, out2), dim=1)

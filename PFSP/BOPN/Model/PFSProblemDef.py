@@ -5,7 +5,7 @@ import numpy as np
 
 def get_random_problems(batch_size, job_size, machine_size):
 
-    problems = torch.randint(1,100,size=(batch_size, job_size, machine_size))/100
+    problems = torch.randint(1,100,size=(batch_size, job_size, machine_size))
     #problem scaling
 
     return problems
