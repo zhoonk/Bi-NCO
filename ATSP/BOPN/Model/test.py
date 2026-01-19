@@ -3,7 +3,7 @@
 
 DEBUG_MODE = False
 USE_CUDA = not DEBUG_MODE
-CUDA_DEVICE_NUM = 0
+CUDA_DEVICE_NUM = 2
 
 
 ##########################################################################################
@@ -29,7 +29,7 @@ from ATSPTester import ATSPTester as Tester
 ##########################################################################################
 # parameters
 
-node_cnt = 100
+node_cnt = 500
 trajectory = node_cnt # node_cnt과 같거나 작아야 함
 
 env_params = {
@@ -54,11 +54,11 @@ tester_params = {
     'use_cuda': USE_CUDA,
     'cuda_device_num': CUDA_DEVICE_NUM,
     'model_load': {
-        'path': './result/ATSP100/',  # directory path of pre-trained model and log files saved.
-        'epoch': 12000,  # epoch version of pre-trained model to laod.
+        'path': './result/ATSPG/',  # directory path of pre-trained model and log files saved.
+        'epoch': 5000,  # epoch version of pre-trained model to laod.
     },
     'test_episodes': 10*1000,
-    'test_batch_size': 200,
+    'test_batch_size': 40,
     'augmentation_enable': False,
     'aug_factor': 8,
     'aug_batch_size': 10000,

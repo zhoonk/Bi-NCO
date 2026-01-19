@@ -2,7 +2,8 @@
 from dataclasses import dataclass
 import torch
 
-from PFSProblemDef import get_random_problems, augment_PFSP
+from PFSProblemDef import get_random_problems
+from PFSProblemDefTest import get_random_problems as get_random_problems_test 
 
 
 @dataclass
@@ -59,6 +60,14 @@ class PFSPEnv:
         if aug_factor > 1:
             self.batch_size = self.batch_size * 2
             self.problems = augment_PFSP(self.problems)
+
+        self.BATCH_IDX = torch.arange(self.batch_size)[:, None].expand(self.batch_size, self.sample_size)
+        self.SAMPLE_IDX = torch.arange(self.sample_size)[None, :].expand(self.batch_size, self.sample_size)
+    
+    def load_problems_test(self, batch_size):
+        self.batch_size = batch_size
+        
+        self.problems = get_random_problems_test(self.batch_size,self.job_size, self.machine_size)
 
         self.BATCH_IDX = torch.arange(self.batch_size)[:, None].expand(self.batch_size, self.sample_size)
         self.SAMPLE_IDX = torch.arange(self.sample_size)[None, :].expand(self.batch_size, self.sample_size)

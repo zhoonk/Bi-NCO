@@ -131,6 +131,7 @@ class PFSPTrainer:
             batch_size = min(self.trainer_params['train_batch_size'], remaining)
 
             avg_score, avg_loss = self._train_one_batch(batch_size)
+            avg_score = self._test_one_batch(batch_size)
             score_AM.update(avg_score, batch_size)
             loss_AM.update(avg_loss, batch_size)
 
@@ -207,6 +208,49 @@ class PFSPTrainer:
         
         return score_mean.item(), loss_mean.item()
 
+    def _test_one_batch(self, batch_size):
 
+        # Augmentation
+        ###############################################
+        aug_factor = 1
+        
+        # Ready
+        ###############################################
+        self.model.eval()
+        with torch.no_grad():
+            
+            self.env.load_problems_test(batch_size)
 
+            reset_state, _, _ = self.env.reset()
+            self.model.pre_forward(reset_state)
+
+        # POMO Rollout
+        ###############################################
+        state, reward, done = self.env.pre_step()
+        while not done:
+            selected, _ = self.model(state)
+            # shape: (batch, pomo)
+            state, reward, done, _ = self.env.step(selected)
+        
+        # Return
+        ###############################################
+        aug_reward = reward.reshape(aug_factor, batch_size, self.env.sample_size)
+        # shape: (augmentation, batch, pomo)
+
+        max_pomo_reward, _ = aug_reward.max(dim=2)  # get best results from pomo
+        # shape: (augmentation, batch)
+
+        opt = torch.load("LB50by20.pth", map_location="cpu", weights_only=True)[:100]
+        opt = opt.to(device=max_pomo_reward.device, dtype=max_pomo_reward.dtype)
+
+        no_aug_score = (100*(-max_pomo_reward[0, :] - opt)/opt).mean()
+
+        # no_aug_score = -max_pomo_reward[0, :].float().mean()  # negative sign to make positive value
+
+        max_aug_pomo_reward, _ = max_pomo_reward.max(dim=0)  # get best results from augmentation
+    
+        # shape: (batch,)
+        aug_score = -max_aug_pomo_reward.float().mean()  # negative sign to make positive value
+        
+        return no_aug_score.item()
     

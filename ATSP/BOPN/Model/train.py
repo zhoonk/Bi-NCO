@@ -31,7 +31,7 @@ from ATSPTrainer import ATSPTrainer as Trainer
 ##########################################################################################
 # parameters
 
-node_cnt = 100
+node_cnt = 50
 trajectory = node_cnt # node_cnt과 같거나 작아야 함
 
 env_params = {
@@ -88,7 +88,7 @@ trainer_params = {
         },
     },
     'model_load': {
-        'enable': True,  # enable loading pre-trained model
+        'enable': False,  # enable loading pre-trained model
         'path': './result/20251229_105625_train__tsp_n20',  # directory path of pre-trained model and log files saved.
         'epoch': 1000,  # epoch version of pre-trained model to laod.
 

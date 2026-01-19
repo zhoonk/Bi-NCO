@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import torch
 
 from ATSProblemDef import get_random_problems
+from ATSProblemDefTest import get_random_problems as get_test_problems
 
 
 @dataclass
@@ -52,6 +53,15 @@ class ATSPEnv:
     def load_problems(self, batch_size, aug_factor = None):
 
         self.problems = get_random_problems(batch_size, self.node_cnt, aug_factor)
+
+        self.batch_size = self.problems.size(0)
+        
+        self.BATCH_IDX = torch.arange(self.batch_size)[:, None].expand(self.batch_size, self.sample_size)
+        self.SAMPLE_IDX = torch.arange(self.sample_size)[None, :].expand(self.batch_size, self.sample_size)
+
+    def load_problems_test(self, batch_size, aug_factor = None):
+
+        self.problems = get_test_problems(batch_size, self.node_cnt, aug_factor)
 
         self.batch_size = self.problems.size(0)
         

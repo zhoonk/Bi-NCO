@@ -99,7 +99,7 @@ class ATSPTester:
         ###############################################
         self.model.eval()
         with torch.no_grad():
-            self.env.load_problems(batch_size)
+            self.env.load_problems_test(batch_size)
 
             reset_state, _, _ = self.env.reset()
             self.model.pre_forward(reset_state)
@@ -110,7 +110,7 @@ class ATSPTester:
         while not done:
             selected, _ = self.model(state)
             # shape: (batch, pomo)
-            state, reward, done, _ = self.env.step(selected)
+            state, reward, done = self.env.step(selected)
 
         # Return
         ###############################################
@@ -125,6 +125,7 @@ class ATSPTester:
         max_aug_pomo_reward, _ = max_pomo_reward.max(dim=0)  # get best results from augmentation
         # shape: (batch,)
         max_pomo_reward_np  = max_aug_pomo_reward.cpu().numpy()
+        np.savetxt("max_pomo_reward.csv", -max_pomo_reward_np, delimiter=",")
 
         aug_score = -max_aug_pomo_reward.float().mean()  # negative sign to make positive value
 

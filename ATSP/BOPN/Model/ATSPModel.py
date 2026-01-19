@@ -250,6 +250,8 @@ class Decoder(nn.Module):
         # ninf_mask.shape: (batch, pomo, problem)
         head_num = self.model_params['head_num']
 
+        # backward와 forward 분기처리 잘못 되었음.
+        # 그러나 단순 인코더 출처 구분이니 문제는 안됨 추후 수정
         if Backward == True:
             k = self.k_t
             v = self.v_t

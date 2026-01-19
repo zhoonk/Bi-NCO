@@ -31,7 +31,7 @@ from PFSPTrainer import PFSPTrainer as Trainer
 ##########################################################################################
 # parameters
 
-job_size = 100
+job_size = 50
 machine_size = 20
 trajectory = job_size # node_cnt과 같거나 작아야 함
 
