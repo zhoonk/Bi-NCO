@@ -28,12 +28,18 @@ class BOPN_Model(nn.Module):
         sample_size = state.BATCH_IDX.size(1)
 
         if state.current_node is None:
-            node = torch.arange(self.node_cnt)
-            selected = torch.cat((node,node),dim=0)[None, :].expand(batch_size, sample_size)
+            # node = torch.arange(self.node_cnt)
+            # selected = torch.cat((node,node),dim=0)[None, :].expand(batch_size, sample_size)
+            selected = torch.randint(
+                low=0,
+                high=self.node_cnt,              # self.node_cnt 미포함
+                size=(batch_size, sample_size),  
+                dtype=torch.long
+            )
             prob = torch.ones(size=(batch_size, sample_size))
 
-            encoded_first_row_f = _get_encoding(self.encoded_nodes_f, selected[:,:self.node_cnt])
-            encoded_first_row_t = _get_encoding(self.encoded_nodes_t, selected[:,self.node_cnt:])
+            encoded_first_row_f = _get_encoding(self.encoded_nodes_f, selected[:,:self.trajectory_size])
+            encoded_first_row_t = _get_encoding(self.encoded_nodes_t, selected[:,self.trajectory_size:])
             # shape: (batch, pomo, embedding)
             self.decoder.set_q1(encoded_first_row_f, encoded_first_row_t)
 

@@ -35,8 +35,8 @@ class PFSPModel(nn.Module):
             start = self.start.reshape(batch_size,1,self.start.size(-1)).repeat(1,self.trajectory_size,1)
             end = self.end.reshape(batch_size,1,self.end.size(-1)).repeat(1,self.trajectory_size,1)
 
-            probs_Forward = self.decoder(self.mean_f, start, ninf_mask=state.ninf_mask[:,:self.trajectory_size])
-            probs_Backward = self.decoder(self.mean_t, end, ninf_mask=state.ninf_mask[:,self.trajectory_size:],Backward = True)
+            probs_Forward = self.decoder(self.encoded_nodes_f, start, ninf_mask=state.ninf_mask[:,:self.trajectory_size])
+            probs_Backward = self.decoder(self.encoded_nodes_t, end, ninf_mask=state.ninf_mask[:,self.trajectory_size:],Backward = True)
 
             probs = torch.cat((probs_Forward,probs_Backward),dim=1)
 
@@ -53,16 +53,27 @@ class PFSPModel(nn.Module):
                     if (prob != 0).all():
                         break
             else:
-                selected = probs.argmax(dim=2)
-                # shape: (batch, pomo)
-                prob = None
+                # selected = probs.argmax(dim=2)
+                # # shape: (batch, pomo)
+                # prob = None
+                while True:
+                    selected = probs.reshape(batch_size * sample_size, -1).multinomial(1) \
+                        .squeeze(dim=1).reshape(batch_size, sample_size)
+                    # shape: (batch, pomo)
+
+                    prob = probs[state.BATCH_IDX, state.SAMPLE_IDX, selected] \
+                        .reshape(batch_size, sample_size)
+                    # shape: (batch, pomo)
+
+                    if (prob != 0).all():
+                        break
 
         else:
             encoded_last_node_f = _get_encoding(self.encoded_nodes_f, state.current_node[:,:self.trajectory_size])
             encoded_last_node_t = _get_encoding(self.encoded_nodes_t, state.current_node[:,self.trajectory_size:])
             # shape: (batch, pomo, embedding)
-            probs_Forward = self.decoder(self.mean_f, encoded_last_node_f, ninf_mask=state.ninf_mask[:,:self.trajectory_size])
-            probs_Backward = self.decoder(self.mean_t, encoded_last_node_t, ninf_mask=state.ninf_mask[:,self.trajectory_size:], Backward=True)
+            probs_Forward = self.decoder(self.encoded_nodes_f, encoded_last_node_f, ninf_mask=state.ninf_mask[:,:self.trajectory_size])
+            probs_Backward = self.decoder(self.encoded_nodes_t, encoded_last_node_t, ninf_mask=state.ninf_mask[:,self.trajectory_size:], Backward=True)
             # shape: (batch, pomo, problem)
 
             probs = torch.cat((probs_Forward, probs_Backward), dim=1)
@@ -229,9 +240,10 @@ class PFSP_Decoder(nn.Module):
         embedding_dim = self.model_params['embedding_dim']
         head_num = self.model_params['head_num']
         qkv_dim = self.model_params['qkv_dim']
+        trajectory_size = self.model_params['trajectory_size']
 
         # self.Wq_first = nn.Linear(embedding_dim, head_num * qkv_dim, bias=False)
-        self.Wq = nn.Linear(2*embedding_dim, head_num * qkv_dim, bias=False)
+        self.Wq = nn.Linear(3*embedding_dim, head_num * qkv_dim, bias=False)
         self.Wk = nn.Linear(embedding_dim, head_num * qkv_dim, bias=False)
         self.Wv = nn.Linear(embedding_dim, head_num * qkv_dim, bias=False)
 
@@ -240,6 +252,8 @@ class PFSP_Decoder(nn.Module):
         self.k = None  # saved key, for multi-head attention
         self.v = None  # saved value, for multi-head_attention
         self.single_head_key = None  # saved, for single-head attention
+
+        self.register_buffer("z", torch.empty(trajectory_size, embedding_dim).uniform_(-1.0, 1.0))
 
 
     def set_kv(self, encoded_nodes_f, encoded_nodes_t):
@@ -258,13 +272,21 @@ class PFSP_Decoder(nn.Module):
         self.single_head_key_t = encoded_nodes_t.transpose(1, 2)
         # shape: (batch, embedding, problem)
 
-    def forward(self, encoded_mean_node, encoded_last_node, ninf_mask, Backward = False):
+    def forward(self, encoded_node, encoded_last_node, ninf_mask, Backward = False):
         # encoded_last_node.shape: (batch, pomo, embedding)
         # ninf_mask.shape: (batch, pomo, problem)
 
         head_num = self.model_params['head_num']
 
-        q_node = torch.cat((encoded_mean_node, encoded_last_node),dim=-1)
+        valid = (ninf_mask == 0).float()          # [100,128,20], allowed=1
+
+        masked_sum_node = valid @ encoded_node         # [100,128,256]
+        cnt = valid.sum(dim=-1, keepdim=True).clamp_min(1.0)
+        masked_avg_node = masked_sum_node / cnt  
+
+        latent_z = self.z.unsqueeze(0).expand(masked_avg_node.size(0), -1, -1) 
+
+        q_node = torch.cat((masked_avg_node, encoded_last_node, latent_z), dim=-1)
         #  Multi-Head Attention
         #######################################################
         q = reshape_by_heads(self.Wq(q_node), head_num=head_num)

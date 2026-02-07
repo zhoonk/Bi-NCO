@@ -131,7 +131,7 @@ class PFSPTrainer:
             batch_size = min(self.trainer_params['train_batch_size'], remaining)
 
             avg_score, avg_loss = self._train_one_batch(batch_size)
-            avg_score = self._test_one_batch(batch_size)
+            # avg_score = self._test_one_batch(batch_size)
             score_AM.update(avg_score, batch_size)
             loss_AM.update(avg_loss, batch_size)
 
@@ -179,21 +179,59 @@ class PFSPTrainer:
         B, N = reward.shape
         mid = N // 2  # N이 짝수라고 가정(홀수여도 mid 기준으로 앞/뒤가 나뉨)
 
-        # # 1) 앞 절반 [0, mid)
-        idx_forward = reward[:, :mid].argmax(dim=1)              # (B,)
-        best_lp_forward = log_prob.gather(1, idx_forward[:, None]).squeeze(1)  # (B,)        
+        eps = 1e-8
+        clip_w = 10.0  # (옵션) 폭주 방지
 
-        # # 2) 뒤 절반 [mid, N)
-        idx_backward = reward[:, mid:].argmax(dim=1) + mid          # (B,)  (0~N-mid-1)
+        # ---------- forward group ----------
+        rew_f = reward[:, :mid]                                # (B, mid)
+        idx_f = rew_f.argmax(dim=1)                            # (B,) group-local index
+        idx_forward = idx_f                                    # global index = same (0~mid-1)
+
+        best_lp_forward = log_prob.gather(1, idx_forward[:, None]).squeeze(1)  # (B,)
+        best_rew_forward = rew_f.gather(1, idx_f[:, None]).squeeze(1)          # (B,)
+
+        mean_f = rew_f.mean(dim=1)                             # (B,)
+        std_f  = rew_f.std(dim=1, unbiased=False).clamp_min(eps)
+
+        w_f = (best_rew_forward - mean_f).abs() / std_f
+        w_f = w_f.detach().clamp_max(clip_w)                   # reward쪽 grad 없겠지만 안전하게 detach
+
+        # ---------- backward group ----------
+        rew_b = reward[:, mid:]                                # (B, N-mid)
+        idx_b_local = rew_b.argmax(dim=1)                      # (B,) local index
+        idx_backward = idx_b_local + mid                       # (B,) global index
+
         best_lp_backward = log_prob.gather(1, idx_backward[:, None]).squeeze(1) # (B,)
+        best_rew_backward = rew_b.gather(1, idx_b_local[:, None]).squeeze(1)    # (B,)
 
-        # # (옵션) (B, 2)로 묶어서 반환
-        best_log_prob = torch.stack([best_lp_forward, best_lp_backward], dim=1)  # (B, 2)
+        mean_b = rew_b.mean(dim=1)
+        std_b  = rew_b.std(dim=1, unbiased=False).clamp_min(eps)
 
-        # # size = (batch, pomo)
-        loss = -best_log_prob  # Minus Sign: To Increase REWARD
-        # # shape: (batch, pomo)
-        loss_mean = loss.mean()
+        w_b = (best_rew_backward - mean_b).abs() / std_b
+        w_b = w_b.detach().clamp_max(clip_w)
+
+        # ---------- adaptive SIL loss ----------
+        loss_forward  = -(w_f * best_lp_forward)               # (B,)
+        loss_backward = -(w_b * best_lp_backward)              # (B,)
+
+        loss = 0.5 * (loss_forward + loss_backward)            # (B,)
+        loss_mean = loss.mean() 
+
+        # # # 1) 앞 절반 [0, mid)
+        # idx_forward = reward[:, :mid].argmax(dim=1)              # (B,)
+        # best_lp_forward = log_prob.gather(1, idx_forward[:, None]).squeeze(1)  # (B,)     
+
+        # # # 2) 뒤 절반 [mid, N)
+        # idx_backward = reward[:, mid:].argmax(dim=1) + mid          # (B,)  (0~N-mid-1)
+        # best_lp_backward = log_prob.gather(1, idx_backward[:, None]).squeeze(1) # (B,)
+
+        # # # (옵션) (B, 2)로 묶어서 반환
+        # best_log_prob = torch.stack([best_lp_forward, best_lp_backward], dim=1)  # (B, 2)
+
+        # # # size = (batch, pomo)
+        # loss = -best_log_prob  # Minus Sign: To Increase REWARD
+        # # # shape: (batch, pomo)
+        # loss_mean = loss.mean()
 
         # Score
         ###############################################

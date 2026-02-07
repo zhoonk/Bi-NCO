@@ -5,7 +5,6 @@ DEBUG_MODE = False
 USE_CUDA = not DEBUG_MODE
 CUDA_DEVICE_NUM = 3
 
-
 ##########################################################################################
 # Path Config
 
@@ -31,9 +30,9 @@ from PFSPTrainer import PFSPTrainer as Trainer
 ##########################################################################################
 # parameters
 
-job_size = 50
-machine_size = 20
-trajectory = job_size # node_cnt과 같거나 작아야 함
+job_size = 20
+machine_size = 10
+trajectory = 128
 
 env_params = {
     'job_size': job_size,
@@ -59,21 +58,32 @@ model_params = {
     'eval_type': 'argmax',
 }
 
+# optimizer_params = {
+#     "optimizer": {
+#         "lr": (0.97**50) * 1e-4,
+#         "weight_decay": 1e-6
+#     },
+#     "scheduler": {
+#         "milestones": list(range(5100, 10001, 100)),  # 5000 이후부터 감소
+#         "gamma": 0.97
+#     }
+# }
+
 optimizer_params = {
-    'optimizer': {
-        'lr': 1e-4,
-        'weight_decay': 1e-6
+    "optimizer": {
+        "lr": (0.97**5) * 1e-4,
+        "weight_decay": 1e-6
     },
-    'scheduler': {
-        'milestones': list(range(100, 5001, 100)),   # if further training is needed
-        'gamma': 0.97
+    "scheduler": {
+        "milestones": list(range(500, 12001, 100)),  # 5000 이후부터 감소
+        "gamma": 0.97
     }
 }
 
 trainer_params = {
     'use_cuda': USE_CUDA,
     'cuda_device_num': CUDA_DEVICE_NUM,
-    'epochs': 5000,
+    'epochs': 12000,
     'train_episodes': 10 * 1000,
     'train_batch_size': 100,
     'sample_iteration': 5,
@@ -92,8 +102,8 @@ trainer_params = {
     },
     'model_load': {
         'enable': False,  # enable loading pre-trained model
-        'path': './result/20251229_105625_train__tsp_n20',  # directory path of pre-trained model and log files saved.
-        'epoch': 1000,  # epoch version of pre-trained model to laod.
+        'path': './result/20260205_180356_train__tsp_n20',  # directory path of pre-trained model and log files saved.
+        'epoch': 500,  # epoch version of pre-trained model to laod.
 
     }
 }

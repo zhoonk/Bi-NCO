@@ -103,7 +103,7 @@ class PFSPTester:
         self.model.eval()
         with torch.no_grad():
             
-            self.env.load_problems(batch_size,aug_factor)
+            self.env.load_problems_test(batch_size)
 
             reset_state, _, _ = self.env.reset()
             self.model.pre_forward(reset_state)
@@ -121,12 +121,29 @@ class PFSPTester:
         aug_reward = reward.reshape(aug_factor, batch_size, self.env.sample_size)
         # shape: (augmentation, batch, pomo)
 
-        max_pomo_reward, _ = (100*aug_reward).max(dim=2)  # get best results from pomo
+        max_pomo_reward, _ = (aug_reward).max(dim=2)  # get best results from pomo
         # shape: (augmentation, batch)
+
+        problems = torch.load(
+            f"/home/inuai_11/Bi-NCO/PFSP/BOPN/Dataset/taidata/tai{self.model_params['job_size']}x{self.model_params['machine_size']}_with_ub.pt",
+            map_location="cpu",
+            weights_only=True
+            )
+        ub = problems["ub"].to(self.device)
+
+        numerator = (-max_pomo_reward - ub).clamp(min=0)   # 음수 -> 0
+        gap_mean = (100.0 * numerator / ub).mean()
+        print(aug_reward)
+        print(-max_pomo_reward)
+        print(ub)
+        print("gap_mean:", gap_mean)
 
         no_aug_score = -max_pomo_reward[0, :].float().mean()  # negative sign to make positive value
 
         max_aug_pomo_reward, _ = max_pomo_reward.max(dim=0)  # get best results from augmentation
+
+        max_pomo_reward_np  = max_aug_pomo_reward.cpu().numpy()
+        np.savetxt(f"max_pomo_rewardj{self.env_params['job_size']}m{self.env_params['machine_size']}.csv", -max_pomo_reward_np, delimiter=",")
     
         # shape: (batch,)
         aug_score = -max_aug_pomo_reward.float().mean()  # negative sign to make positive value
