@@ -131,7 +131,7 @@ class ATSPTrainer:
             batch_size = min(self.trainer_params['train_batch_size'], remaining)
 
             avg_score, avg_loss = self._train_one_batch(batch_size)
-            avg_score = self._test_one_batch(batch_size)
+            # avg_score = self._test_one_batch(batch_size)
             score_AM.update(avg_score, batch_size)
             loss_AM.update(avg_loss, batch_size)
 
@@ -175,37 +175,13 @@ class ATSPTrainer:
         
         # # Loss
         # ###############################################
-        # advantage = reward - reward.float().mean(dim=1, keepdims=True)
-        # # shape: (batch, pomo)
-        # log_prob = prob_list.log().sum(dim=2)
-        # # size = (batch, pomo)
-        # loss = -advantage * log_prob  # Minus Sign: To Increase REWARD
-        # # shape: (batch, pomo)
-        # loss_mean = loss.mean()
-        
-        # Loss
-        ############################
-        ###################
-        # shape: (batch, pomo)
-        log_prob = prob_list.log().mean(dim=2)
+        mid = self.model_params['trajectory_size']  # N이 짝수라고 가정(홀수여도 mid 기준으로 앞/뒤가 나뉨)
 
-        B, N = reward.shape
-        mid = N // 2  # N이 짝수라고 가정(홀수여도 mid 기준으로 앞/뒤가 나뉨)
+        # ---------- adaptive SIL loss ----------
+        loss_forward = self._loss_calc(reward[:,:mid],prob_list[:,:mid])
+        loss_backward = self._loss_calc(reward[:,mid:],prob_list[:,mid:])
 
-        # # 1) 앞 절반 [0, mid)
-        idx_forward = reward[:, :mid].argmax(dim=1)              # (B,)
-        best_lp_forward = log_prob.gather(1, idx_forward[:, None]).squeeze(1)  # (B,)        
-
-        # # 2) 뒤 절반 [mid, N)
-        idx_backward = reward[:, mid:].argmax(dim=1) + mid          # (B,)  (0~N-mid-1)
-        best_lp_backward = log_prob.gather(1, idx_backward[:, None]).squeeze(1) # (B,)
-
-        # # (옵션) (B, 2)로 묶어서 반환
-        best_log_prob = torch.stack([best_lp_forward, best_lp_backward], dim=1)  # (B, 2)
-
-        # # size = (batch, pomo)
-        loss = -best_log_prob  # Minus Sign: To Increase REWARD
-        # # shape: (batch, pomo)
+        loss = 0.5 * (loss_forward + loss_backward)          # (B,)
         loss_mean = loss.mean()
 
         # Score
@@ -221,6 +197,24 @@ class ATSPTrainer:
 
         return score_mean.item(), loss_mean.item()
     
+    def _loss_calc(self, reward, prob_list):
+        _, argmax = reward.max(dim=1)
+        batch_size = reward.size(0)
+
+        max_reward = reward.max(dim=1, keepdim=True).values  # [batch, 1]
+        mean_reward = reward.mean(dim=1, keepdim=True)  # [batch, 1]
+        pomo_variance = reward.var(dim=1, keepdim=True, unbiased=False)  # [batch, 1]
+        loss_weight = (max_reward - mean_reward) / torch.sqrt(pomo_variance + 1e-8)  # [batch, 1]
+        
+        probs = prob_list[torch.arange(batch_size), argmax, :] 
+        probs = probs[:,:-1]
+        log_probs = torch.log(probs+ 1e-8)
+
+        batch_loss = log_probs*loss_weight
+        SIL_loss = -batch_loss.mean()
+
+        return SIL_loss
+
     def _test_one_batch(self, batch_size):
 
         aug_factor = 1

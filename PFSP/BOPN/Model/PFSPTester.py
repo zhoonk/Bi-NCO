@@ -79,6 +79,7 @@ class PFSPTester:
             # Logs
             ############################
             elapsed_time_str, remain_time_str = self.time_estimator.get_est_string(episode, test_num_episode)
+            print('timeeeeeeeeeeeeeeeeeeeeeeee',elapsed_time_str)
             self.logger.info("episode {:3d}/{:3d}, Elapsed[{}], Remain[{}], score:{:.3f}, aug_score:{:.3f}".format(
                 episode, test_num_episode, elapsed_time_str, remain_time_str, score, aug_score))
 
@@ -133,7 +134,7 @@ class PFSPTester:
 
         numerator = (-max_pomo_reward - ub).clamp(min=0)   # 음수 -> 0
         gap_mean = (100.0 * numerator / ub).mean()
-        print(aug_reward)
+        print(aug_reward.size())
         print(-max_pomo_reward)
         print(ub)
         print("gap_mean:", gap_mean)

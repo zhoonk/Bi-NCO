@@ -29,8 +29,8 @@ from ATSPTester import ATSPTester as Tester
 ##########################################################################################
 # parameters
 
-node_cnt = 100
-trajectory = node_cnt # node_cnt과 같거나 작아야 함
+node_cnt = 200
+trajectory = 100 # node_cnt과 같거나 작아야 함
 
 env_params = {
     'node_cnt': node_cnt,
@@ -40,6 +40,8 @@ env_params = {
 model_params = {
     'node_cnt': node_cnt,
     'trajectory_size': trajectory,
+    'dz_cat': 12,
+    'dz_cont': 4,
     'embedding_dim': 256,
     'sqrt_embedding_dim': 256**(1/2),
     'encoder_layer_num': 6,
@@ -57,11 +59,11 @@ tester_params = {
         'path': './result/ATSPG/',  # directory path of pre-trained model and log files saved.
         'epoch': 5000,  # epoch version of pre-trained model to laod.
     },
-    'test_episodes': 1000,
-    'test_batch_size': 1000,
-    'augmentation_enable': False,
-    'aug_factor': 8,
-    'aug_batch_size': 10000,
+    'test_episodes': 50,
+    'test_batch_size': 50,
+    'augmentation_enable': True,
+    'aug_factor': 10,
+    'aug_batch_size': 50,
 }
 if tester_params['augmentation_enable']:
     tester_params['test_batch_size'] = tester_params['aug_batch_size']

@@ -3,7 +3,8 @@
 
 DEBUG_MODE = False
 USE_CUDA = not DEBUG_MODE
-CUDA_DEVICE_NUM = 2
+CUDA_DEVICE_NUM = 3
+
 
 ##########################################################################################
 # Path Config
@@ -24,30 +25,26 @@ sys.path.insert(0, "../..")  # for utils
 import logging
 from utils.utils import create_logger, copy_all_src
 
-from PFSPTrainer import PFSPTrainer as Trainer
+from ATSPTrainer import ATSPTrainer as Trainer
 
 
 ##########################################################################################
 # parameters
 
-job_size = 20
-machine_size = 10
-trajectory = 64
-
+node_cnt = 100
+trajectory = 100 # node_cnt과 같거나 작아야 함
 
 env_params = {
-    'job_size': job_size,
-    'machine_size': machine_size,
+    'node_cnt': node_cnt,
     'trajectory_size': trajectory,
 }
 
 model_params = {
-    'job_size': job_size,
-    'machine_size': machine_size,
+    'node_cnt': node_cnt,
     'trajectory_size': trajectory,
+    'embedding_dim': 256,
     'dz_cat': 12,
     'dz_cont': 4,
-    'embedding_dim': 256,
     'sqrt_embedding_dim': 256**(1/2),
     'encoder_layer_num': 6,
     'qkv_dim': 16,
@@ -61,39 +58,29 @@ model_params = {
     'eval_type': 'argmax',
 }
 
-# optimizer_params = {
-#     "optimizer": {
-#         "lr": (0.97**50) * 1e-4,
-#         "weight_decay": 1e-6
-#     },
-#     "scheduler": {
-#         "milestones": list(range(5100, 10001, 100)),  # 5000 이후부터 감소
-#         "gamma": 0.97
-#     }
-# }
-
 optimizer_params = {
-    "optimizer": {
-        "lr": 1e-4,
-        "weight_decay": 1e-6
+    'optimizer': {
+        'lr': 1e-4,
+        'weight_decay': 1e-6
     },
-    "scheduler": {
-        "milestones": [900, 950],  # 5000 이후부터 감소
-        "gamma": 0.1
+    'scheduler': {
+        'milestones': list(range(0, 5001, 100)),   # if further training is needed
+        'gamma': 0.97
     }
 }
 
 trainer_params = {
     'use_cuda': USE_CUDA,
     'cuda_device_num': CUDA_DEVICE_NUM,
-    'epochs': 1000,
-    'train_episodes': 100 * 1000,
-    'train_batch_size': 200,
+    'epochs': 5000,
+    'train_episodes': 10 * 1000,
+    'train_batch_size': 100,
+    'accumulation_step':2,
     'sample_iteration': 5,
     'eps_clip': 0.2,
     'logging': {
-        'model_save_interval': 100,
-        'img_save_interval': 100,
+        'model_save_interval': 500,
+        'img_save_interval': 500,
         'log_image_params_1': {
             'json_foldername': 'log_image_style',
             'filename': 'style_tsp_20.json'
@@ -104,9 +91,9 @@ trainer_params = {
         },
     },
     'model_load': {
-        'enable': False,  # enable loading pre-trained model
-        'path': './result/stable',  # directory path of pre-trained model and log files saved.
-        'epoch': 1400,  # epoch version of pre-trained model to laod.
+        'enable': True,  # enable loading pre-trained model
+        'path': './result/20260222_152152_train__tsp_n20',  # directory path of pre-trained model and log files saved.
+        'epoch': 2000,  # epoch version of pre-trained model to laod.
 
     }
 }

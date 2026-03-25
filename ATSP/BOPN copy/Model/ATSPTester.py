@@ -114,7 +114,7 @@ class ATSPTester:
 
         # Return
         ###############################################
-        
+        print(reward.size())
         aug_reward = reward.reshape(aug_factor, batch_size, self.env.sample_size)
         # shape: (augmentation, batch, pomo)
 

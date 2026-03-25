@@ -2,8 +2,8 @@
 import torch
 from logging import getLogger
 
-from PFSPEnv import PFSPEnv as Env
-from PFSPModel import PFSPModel as Model
+from ATSPEnv import ATSPEnv as Env
+from ATSPModel import BOPN_Model as Model
 
 from torch.optim import Adam as Optimizer
 from torch.optim.lr_scheduler import MultiStepLR as Scheduler
@@ -11,7 +11,7 @@ from torch.optim.lr_scheduler import MultiStepLR as Scheduler
 from utils.utils import *
 
 
-class PFSPTrainer:
+class ATSPTrainer:
     def __init__(self,
                  env_params,
                  model_params,
@@ -23,6 +23,7 @@ class PFSPTrainer:
         self.model_params = model_params
         self.optimizer_params = optimizer_params
         self.trainer_params = trainer_params
+        self.accumulation_step = trainer_params['accumulation_step']
 
         # result folder, logger
         self.logger = getLogger(name='trainer')
@@ -125,32 +126,47 @@ class PFSPTrainer:
         train_num_episode = self.trainer_params['train_episodes']
         episode = 0
         loop_cnt = 0
+        micro_step = 0
+
+        # ✅ accumulation 시작: epoch 시작 시 grad 초기화
+        self.optimizer.zero_grad(set_to_none=True)
+
         while episode < train_num_episode:
 
             remaining = train_num_episode - episode
             batch_size = min(self.trainer_params['train_batch_size'], remaining)
 
-            avg_score, avg_loss = self._train_one_batch(batch_size)
-            # avg_score = self._test_one_batch(batch_size)
-            score_AM.update(avg_score, batch_size)
-            loss_AM.update(avg_loss, batch_size)
+            avg_score, avg_loss = self._train_one_batch(batch_size)  # loss는 Tensor(스칼라)
 
+            # ✅ PFSP 코드와 동일: 표시용 loss는 "원래 loss"로 기록
+            loss_AM.update(avg_loss.item(), batch_size)
+            score_AM.update(avg_score.item(), batch_size)
+
+            # ✅ accumulation: loss를 accumulation_step으로 나눠서 backward
+            (avg_loss / self.accumulation_step).backward()
+
+            micro_step += 1
             episode += batch_size
+
+            # ✅ step 조건: accumulation_step마다 step 또는 epoch의 마지막 batch에서 step
+            is_last = (episode >= train_num_episode)
+            if (micro_step % self.accumulation_step) == 0 or is_last:
+                self.optimizer.step()
+                self.optimizer.zero_grad(set_to_none=True)
 
             # Log First 10 Batch, only at the first epoch
             if epoch == self.start_epoch:
                 loop_cnt += 1
                 if loop_cnt <= 10:
                     self.logger.info('Epoch {:3d}: Train {:3d}/{:3d}({:1.1f}%)  Score: {:.4f},  Loss: {:.4f}'
-                                     .format(epoch, episode, train_num_episode, 100. * episode / train_num_episode,
-                                             score_AM.avg, loss_AM.avg))
+                                    .format(epoch, episode, train_num_episode, 100. * episode / train_num_episode,
+                                            score_AM.avg, loss_AM.avg))
 
         # Log Once, for each epoch
         self.logger.info('Epoch {:3d}: Train ({:3.0f}%)  Score: {:.4f},  Loss: {:.4f}'
-                         .format(epoch, 100. * episode / train_num_episode,
-                                 score_AM.avg, loss_AM.avg))
-        # if epoch%10 == 0:
-        #     self.validation(batch_size)
+                        .format(epoch, 100. * episode / train_num_episode,
+                                score_AM.avg, loss_AM.avg))
+
         return score_AM.avg, loss_AM.avg
 
     def _train_one_batch(self, batch_size):
@@ -171,10 +187,11 @@ class PFSPTrainer:
         while not done:
             selected, prob = self.model(state)
             # shape: (batch, pomo)
-            state, reward, done, route = self.env.step(selected)
+            state, reward, done = self.env.step(selected)
             prob_list = torch.cat((prob_list, prob[:, :, None]), dim=2)
-
-
+        
+        # # Loss
+        # ###############################################
         mid = self.model_params['trajectory_size']  # N이 짝수라고 가정(홀수여도 mid 기준으로 앞/뒤가 나뉨)
 
         # ---------- adaptive SIL loss ----------
@@ -189,14 +206,14 @@ class PFSPTrainer:
         max_pomo_reward, _ = reward.max(dim=1)  # get best results from pomo
         score_mean = -max_pomo_reward.float().mean()  # negative sign to make positive value
 
-        # Step & Return
-        ###############################################
-        self.model.zero_grad()
-        loss_mean.backward()
-        self.optimizer.step()
-        
-        return score_mean.item(), loss_mean.item()
+        # # Step & Return
+        # ###############################################
+        # self.model.zero_grad()
+        # loss_mean.backward()
+        # self.optimizer.step()
 
+        return score_mean, loss_mean
+    
     def _loss_calc(self, reward, prob_list):
         _, argmax = reward.max(dim=1)
         batch_size = reward.size(0)
@@ -217,15 +234,12 @@ class PFSPTrainer:
 
     def _test_one_batch(self, batch_size):
 
-        # Augmentation
-        ###############################################
         aug_factor = 1
-        
+    
         # Ready
         ###############################################
         self.model.eval()
         with torch.no_grad():
-            
             self.env.load_problems_test(batch_size)
 
             reset_state, _, _ = self.env.reset()
@@ -237,27 +251,29 @@ class PFSPTrainer:
         while not done:
             selected, _ = self.model(state)
             # shape: (batch, pomo)
-            state, reward, done, _ = self.env.step(selected)
-        
+            state, reward, done = self.env.step(selected)
+
         # Return
         ###############################################
+        
         aug_reward = reward.reshape(aug_factor, batch_size, self.env.sample_size)
         # shape: (augmentation, batch, pomo)
 
-        max_pomo_reward, _ = aug_reward.max(dim=2)  # get best results from pomo
+        max_pomo_reward,_ = aug_reward.max(dim=2)  # get best results from pomo
         # shape: (augmentation, batch)
 
-        opt = torch.load("LB50by20.pth", map_location="cpu", weights_only=True)[:100]
-        opt = opt.to(device=max_pomo_reward.device, dtype=max_pomo_reward.dtype)
+        opt = np.loadtxt("atsp50_100p.csv", delimiter=",")
 
-        no_aug_score = (100*(-max_pomo_reward[0, :] - opt)/opt).mean()
+        opt_t = torch.from_numpy(opt).to(device=max_pomo_reward.device, dtype=max_pomo_reward.dtype)
+
+        no_aug_score = (100*(-max_pomo_reward[0, :] - opt_t)/opt_t).mean()
 
         # no_aug_score = -max_pomo_reward[0, :].float().mean()  # negative sign to make positive value
-
-        max_aug_pomo_reward, _ = max_pomo_reward.max(dim=0)  # get best results from augmentation
-    
-        # shape: (batch,)
-        aug_score = -max_aug_pomo_reward.float().mean()  # negative sign to make positive value
         
+        max_aug_pomo_reward, _ = max_pomo_reward.max(dim=0)  # get best results from augmentation
+        # shape: (batch,)
+        max_pomo_reward_np  = max_aug_pomo_reward.cpu().numpy()
+
+        aug_score = -max_aug_pomo_reward.float().mean()  # negative sign to make positive value
+
         return no_aug_score.item()
-    

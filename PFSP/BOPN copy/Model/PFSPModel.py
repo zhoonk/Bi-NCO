@@ -3,53 +3,78 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from ATSPModel_LIB import MixedScore_MultiHeadAttention
 
 
-class BOPN_Model(nn.Module):
+class PFSPModel(nn.Module):
 
     def __init__(self, **model_params):
         super().__init__()
         self.model_params = model_params
-        self.node_cnt = model_params['node_cnt']
+        self.job_size = model_params['job_size']
+        self.machine_size = model_params['machine_size']
         self.trajectory_size = model_params['trajectory_size']
-        self.cross_encoder = Cross_Encoder(**model_params)
-        self.decoder = Decoder(**model_params)
+        embedding_dim = model_params['embedding_dim']
+        self.encoder = PFSP_Encoder(**model_params)
+        self.decoder = PFSP_Decoder(**model_params)
         self.encoded_nodes_j = None
         self.encoded_nodes_m = None
+        self.start = nn.Parameter(torch.empty(1, 1, embedding_dim))
+        self.start.data.uniform_(-1, 1)
+        self.end = nn.Parameter(torch.empty(1, 1, embedding_dim))
+        self.end.data.uniform_(-1, 1)
         # shape: (batch, problem, EMBEDDING_DIM)
 
     def pre_forward(self, reset_state):
-        self.encoded_nodes_f, self.encoded_nodes_t = self.cross_encoder(reset_state.problems)
+        self.encoded_nodes = self.encoder(reset_state.problems)
         # shape: (batch, problem, EMBEDDING_DIM)
-        self.decoder.set_kv(self.encoded_nodes_f, self.encoded_nodes_t)
+        self.decoder.set_kv(self.encoded_nodes)
 
     def forward(self, state):
         batch_size = state.BATCH_IDX.size(0)
         sample_size = state.BATCH_IDX.size(1)
 
         if state.current_node is None:
-            # node = torch.arange(self.node_cnt)
-            # selected = torch.cat((node,node),dim=0)[None, :].expand(batch_size, sample_size)
-            selected = torch.randint(
-                low=0,
-                high=self.node_cnt,              # self.node_cnt 미포함
-                size=(batch_size, sample_size),  
-                dtype=torch.long
-            )
-            prob = torch.ones(size=(batch_size, sample_size))
+            start = self.start.repeat(batch_size,self.trajectory_size,1)
+            end = self.end.repeat(batch_size,self.trajectory_size,1)
 
-            encoded_first_row_f = _get_encoding(self.encoded_nodes_f, selected[:,:self.trajectory_size])
-            encoded_first_row_t = _get_encoding(self.encoded_nodes_t, selected[:,self.trajectory_size:])
-            # shape: (batch, pomo, embedding)
-            self.decoder.set_q1(encoded_first_row_f, encoded_first_row_t)
+            probs_Forward = self.decoder(self.encoded_nodes, start, ninf_mask=state.ninf_mask[:,:self.trajectory_size])
+            probs_Backward = self.decoder(self.encoded_nodes, end, ninf_mask=state.ninf_mask[:,self.trajectory_size:],Backward = True)
 
+            probs = torch.cat((probs_Forward,probs_Backward),dim=1)
+
+            if self.training or self.model_params['eval_type'] == 'softmax':
+                while True:
+                    selected = probs.reshape(batch_size * sample_size, -1).multinomial(1) \
+                        .squeeze(dim=1).reshape(batch_size, sample_size)
+                    # shape: (batch, pomo)
+
+                    prob = probs[state.BATCH_IDX, state.SAMPLE_IDX, selected] \
+                        .reshape(batch_size, sample_size)
+                    # shape: (batch, pomo)
+
+                    if (prob != 0).all():
+                        break
+            else:
+                # selected = probs.argmax(dim=2)
+                # # shape: (batch, pomo)
+                # prob = None
+                while True:
+                    selected = probs.reshape(batch_size * sample_size, -1).multinomial(1) \
+                        .squeeze(dim=1).reshape(batch_size, sample_size)
+                    # shape: (batch, pomo)
+
+                    prob = probs[state.BATCH_IDX, state.SAMPLE_IDX, selected] \
+                        .reshape(batch_size, sample_size)
+                    # shape: (batch, pomo)
+
+                    if (prob != 0).all():
+                        break
         else:
-            encoded_last_node_f = _get_encoding(self.encoded_nodes_f, state.current_node[:,:self.trajectory_size])
-            encoded_last_node_t = _get_encoding(self.encoded_nodes_t, state.current_node[:,self.trajectory_size:])
+            encoded_last_node_f = _get_encoding(self.encoded_nodes, state.current_node[:,:self.trajectory_size])
+            encoded_last_node_t = _get_encoding(self.encoded_nodes, state.current_node[:,self.trajectory_size:])
             # shape: (batch, pomo, embedding)
-            probs_Forward = self.decoder(encoded_last_node_f, ninf_mask=state.ninf_mask[:,:self.trajectory_size])
-            probs_Backward = self.decoder(encoded_last_node_t, ninf_mask=state.ninf_mask[:,self.trajectory_size:], Backward=True)
+            probs_Forward = self.decoder(self.encoded_nodes, encoded_last_node_f, ninf_mask=state.ninf_mask[:,:self.trajectory_size])
+            probs_Backward = self.decoder(self.encoded_nodes, encoded_last_node_t, ninf_mask=state.ninf_mask[:,self.trajectory_size:], Backward=True)
             # shape: (batch, pomo, problem)
 
             probs = torch.cat((probs_Forward, probs_Backward), dim=1)
@@ -72,7 +97,6 @@ class BOPN_Model(nn.Module):
                 prob = None
 
         return selected, prob
-    
 
 def _get_encoding(encoded_nodes, node_index_to_pick):
     # encoded_nodes.shape: (batch, problem, embedding)
@@ -95,15 +119,15 @@ def _get_encoding(encoded_nodes, node_index_to_pick):
 ########################################
 # ENCODER
 ########################################
-class Cross_Encoder(nn.Module):
+class PFSP_Encoder(nn.Module):
     def __init__(self, **model_params):
         super().__init__()
         encoder_layer_num = model_params['encoder_layer_num']
         self.layers = nn.ModuleList([EncoderLayer(**model_params) for _ in range(encoder_layer_num)])
+        job_size = model_params['job_size']
+        machine_size = model_params['machine_size']
         embedding_dim = model_params['embedding_dim']
-
-        self.node_idx_projection = nn.Linear(1, embedding_dim)
-        self.edge_mtrx_projection = nn.Linear(1, embedding_dim)
+        self.embedding = nn.Linear(machine_size, embedding_dim)
 
     def compute_normalized_matrices(self, data):
 
@@ -126,37 +150,28 @@ class Cross_Encoder(nn.Module):
         # col_emb.shape: (batch, col_cnt, embedding)
         # row_emb.shape: (batch, row_cnt, embedding)
         # cost_mat.shape: (batch, row_cnt, col_cnt)
+        # start = self.start.repeat(data.size(0), 1, 1)
+        # end = self.end.repeat(data.size(0), 1, 1)
 
-        batch_size, num_nodes, _ = data.shape
-
-        input_emb = self.node_idx_projection(torch.rand((batch_size, num_nodes, 1)))
-
-        out1, out2 = input_emb, input_emb
-        
         scaled_data = self.compute_normalized_matrices(data)
-        
-        edge_emb = self.edge_mtrx_projection(scaled_data.float().unsqueeze(-1))
+        out = self.embedding(scaled_data.float())
 
         for layer in self.layers:
-            out1, out2 = layer(out1, out2, edge_emb)
+            out = layer(out)
 
-        return out1, out2
-
+        return out
 
 class EncoderLayer(nn.Module):
     def __init__(self, **model_params):
         super().__init__()
-        self.row_encoding_block = EncodingBlock(**model_params)
-        self.col_encoding_block = EncodingBlock(**model_params)
+        self.encoding_block = EncodingBlock(**model_params)
 
-    def forward(self, row_emb, col_emb, edge_emb):
+    def forward(self, emb):
         # row_emb.shape: (batch, row_cnt, embedding)
         # col_emb.shape: (batch, col_cnt, embedding)
         # cost_mat.shape: (batch, row_cnt, col_cnt)
-        row_emb_out = self.row_encoding_block(row_emb, col_emb, edge_emb)
-        col_emb_out = self.col_encoding_block(col_emb, row_emb, edge_emb.transpose(2,1))
-
-        return row_emb_out, col_emb_out
+        emb_out = self.encoding_block(emb)
+        return emb_out
 
 
 class EncodingBlock(nn.Module):
@@ -176,28 +191,26 @@ class EncodingBlock(nn.Module):
         self.feed_forward = Feed_Forward_Module(**model_params)
         self.add_n_normalization_2 = Add_And_Normalization_Module(**model_params)
 
-        self.mixed_score_MHA = MixedScore_MultiHeadAttention(**model_params)
-
-    def forward(self, row_emb, col_emb, edge_emb):
+    def forward(self, emb):
         # NOTE: row and col can be exchanged, if cost_mat.transpose(1,2) is used
         # input1.shape: (batch, row_cnt, embedding)
         # input2.shape: (batch, col_cnt, embedding)
         # cost_mat.shape: (batch, row_cnt, col_cnt)
         head_num = self.model_params['head_num']
 
-        q = reshape_by_heads(self.Wq(row_emb), head_num=head_num)
+        q = reshape_by_heads(self.Wq(emb), head_num=head_num)
         # q shape: (batch, head_num, row_cnt, qkv_dim)
-        k = reshape_by_heads(self.Wk(col_emb), head_num=head_num)
-        v = reshape_by_heads(self.Wv(col_emb), head_num=head_num)
+        k = reshape_by_heads(self.Wk(emb), head_num=head_num)
+        v = reshape_by_heads(self.Wv(emb), head_num=head_num)
+        # kv shape: (batch, head_num, col_cnt, qkv_dim)
 
-        out_concat = self.mixed_score_MHA(q, k, v, edge_emb)
-
+        out_concat = multi_head_attention(q, k, v)
         # shape: (batch, row_cnt, head_num*qkv_dim)
 
         multi_head_out = self.multi_head_combine(out_concat)
         # shape: (batch, row_cnt, embedding)
 
-        out1 = self.add_n_normalization_1(row_emb, multi_head_out)
+        out1 = self.add_n_normalization_1(emb, multi_head_out)
         out2 = self.feed_forward(out1)
         out3 = self.add_n_normalization_2(out1, out2)
 
@@ -207,77 +220,95 @@ class EncodingBlock(nn.Module):
 # DECODER
 ########################################
 
-class Decoder(nn.Module):
+class PFSP_Decoder(nn.Module):
     def __init__(self, **model_params):
         super().__init__()
         self.model_params = model_params
         embedding_dim = self.model_params['embedding_dim']
         head_num = self.model_params['head_num']
         qkv_dim = self.model_params['qkv_dim']
+        trajectory_size = self.model_params['trajectory_size']
 
-        self.Wq_1 = nn.Linear(embedding_dim, head_num * qkv_dim, bias=False)
-        self.Wq_0 = nn.Linear(embedding_dim, head_num * qkv_dim, bias=False)
-        self.Wk = nn.Linear(embedding_dim, head_num * qkv_dim, bias=False)
-        self.Wv = nn.Linear(embedding_dim, head_num * qkv_dim, bias=False)
+        self.dz_cont = self.model_params['dz_cont']
+        self.dz_cat = self.model_params['dz_cat']
+        dz = self.dz_cont + self.dz_cat
+        
+        self.Wq_f = nn.Linear(dz+2*embedding_dim, head_num * qkv_dim, bias=False)
+        self.Wk_f = nn.Linear(embedding_dim, head_num * qkv_dim, bias=False)
+        self.Wv_f = nn.Linear(embedding_dim, head_num * qkv_dim, bias=False)
+        self.Wp_f = nn.Linear(embedding_dim, head_num * qkv_dim, bias=False)
+        self.Wq_t = nn.Linear(dz+2*embedding_dim, head_num * qkv_dim, bias=False)
+        self.Wk_t = nn.Linear(embedding_dim, head_num * qkv_dim, bias=False)
+        self.Wv_t = nn.Linear(embedding_dim, head_num * qkv_dim, bias=False)
+        self.Wp_t = nn.Linear(embedding_dim, head_num * qkv_dim, bias=False)
 
         self.multi_head_combine = nn.Linear(head_num * qkv_dim, embedding_dim)
 
         self.k = None  # saved key, for multi-head attention
         self.v = None  # saved value, for multi-head_attention
         self.single_head_key = None  # saved, for single-head attention
-        self.q1_f = None  # saved q1, for multi-head attention
-        self.q1_t = None  # saved q1, for multi-head attention
 
-    def set_kv(self, encoded_nodes_f, encoded_nodes_t):
+
+    def set_kv(self, encoded_nodes):
         # encoded_nodes.shape: (batch, problem, embedding)
         head_num = self.model_params['head_num']
 
-        self.k_f = reshape_by_heads(self.Wk(encoded_nodes_f), head_num=head_num)
-        self.v_f = reshape_by_heads(self.Wv(encoded_nodes_f), head_num=head_num)
+        self.k_f = reshape_by_heads(self.Wk_f(encoded_nodes), head_num=head_num)
+        self.v_f = reshape_by_heads(self.Wv_f(encoded_nodes), head_num=head_num)
         # shape: (batch, head_num, pomo, qkv_dim)
-        self.single_head_key_f = encoded_nodes_f.transpose(1, 2)
+        self.single_head_key_f = self.Wp_f(encoded_nodes).transpose(1, 2)
         # shape: (batch, embedding, problem)
 
-        self.k_t = reshape_by_heads(self.Wk(encoded_nodes_t), head_num=head_num)
-        self.v_t = reshape_by_heads(self.Wv(encoded_nodes_t), head_num=head_num)
+        self.k_t = reshape_by_heads(self.Wk_t(encoded_nodes), head_num=head_num)
+        self.v_t = reshape_by_heads(self.Wv_t(encoded_nodes), head_num=head_num)
         # shape: (batch, head_num, pomo, qkv_dim)
-        self.single_head_key_t = encoded_nodes_t.transpose(1, 2)
+        self.single_head_key_t = self.Wp_t(encoded_nodes).transpose(1, 2)
         # shape: (batch, embedding, problem)
-
-    def set_q1(self, encoded_q1_f,encoded_q1_t):
-        # encoded_q.shape: (batch, n, embedding)  # n can be 1 or pomo
+    
+    def set_z(self, batch_size, trajectory_size):
         head_num = self.model_params['head_num']
 
-        self.q1_f = reshape_by_heads(self.Wq_1(encoded_q1_f), head_num=head_num)
-        self.q1_t = reshape_by_heads(self.Wq_1(encoded_q1_t), head_num=head_num)
-        # shape: (batch, head_num, n, qkv_dim)
+        latent_c_var = torch.empty(batch_size, trajectory_size, self.dz_cont).uniform_(-1, 1)
 
-    def forward(self, encoded_q0, ninf_mask, Backward = False):
+        latent_d_var = torch.zeros((batch_size, trajectory_size, self.dz_cat), dtype=torch.float32)
+        one_hot_idx = torch.randint(0, self.dz_cat, (batch_size, trajectory_size), dtype=torch.long)
+        latent_d_var[torch.arange(batch_size).unsqueeze(1), torch.arange(trajectory_size).unsqueeze(0), one_hot_idx] = 1
+
+        latent_var = torch.cat([latent_d_var, latent_c_var], dim=-1)
+        return latent_var
+
+    def forward(self, encoded_node, encoded_last_node, ninf_mask, Backward = False):
         # encoded_last_node.shape: (batch, pomo, embedding)
         # ninf_mask.shape: (batch, pomo, problem)
+
         head_num = self.model_params['head_num']
 
-        # backward와 forward 분기처리 잘못 되었음.
-        # 그러나 단순 인코더 출처 구분이니 문제는 안됨 추후 수정
+        valid = (ninf_mask == 0).float()          # [100,128,20], allowed=1
+        masked_sum_node = valid @ encoded_node         # [100,128,256]
+        cnt = valid.sum(dim=-1, keepdim=True).clamp_min(1.0)
+        masked_avg_node = masked_sum_node / cnt  
+
+        latent_z = self.set_z(encoded_last_node.size(0), encoded_last_node.size(1)) 
+
+        q_node = torch.cat((masked_avg_node, encoded_last_node, latent_z), dim=-1)
+        #  Multi-Head Attention
+        #######################################################
+
+        # q = q_last
+        # shape: (batch, head_num, pomo, qkv_dim)
+
         if Backward == True:
-            k = self.k_t
-            v = self.v_t
-            single_head_key = self.single_head_key_t
-            q1 = self.q1_f
-        else:
+            q = reshape_by_heads(self.Wq_t(q_node), head_num=head_num)
+            # shape: (batch, head_num, pomo, qkv_dim)
             k = self.k_f
             v = self.v_f
             single_head_key = self.single_head_key_f
-            q1 = self.q1_t
-            
-
-        #  Multi-Head Attention
-        #######################################################
-        q0 = reshape_by_heads(self.Wq_0(encoded_q0), head_num=head_num)
-        # shape: (batch, head_num, pomo, qkv_dim)
-
-        q = q1 + q0
-        # shape: (batch, head_num, pomo, qkv_dim)
+        else:
+            q = reshape_by_heads(self.Wq_f(q_node), head_num=head_num)
+            # shape: (batch, head_num, pomo, qkv_dim)
+            k = self.k_t
+            v = self.v_t
+            single_head_key = self.single_head_key_t
 
         out_concat = multi_head_attention(q, k, v, rank3_ninf_mask=ninf_mask)
         # shape: (batch, pomo, head_num*qkv_dim)
@@ -325,7 +356,7 @@ def reshape_by_heads(qkv, head_num):
     return q_transposed
 
 
-def multi_head_attention(q, k, v, rank2_ninf_mask=None, rank3_ninf_mask=None, mtrx=None):
+def multi_head_attention(q, k, v, rank2_ninf_mask=None, rank3_ninf_mask=None):
     # q shape: (batch, head_num, n, key_dim)   : n can be either 1 or PROBLEM_SIZE
     # k,v shape: (batch, head_num, problem, key_dim)
     # rank2_ninf_mask.shape: (batch, problem)
@@ -342,9 +373,6 @@ def multi_head_attention(q, k, v, rank2_ninf_mask=None, rank3_ninf_mask=None, mt
     # shape: (batch, head_num, n, problem)
 
     score_scaled = score / torch.sqrt(torch.tensor(key_dim, dtype=torch.float))
-
-    if mtrx is not None:
-        score_scaled += mtrx.permute(0, 3, 1, 2)
 
 
     if rank2_ninf_mask is not None:

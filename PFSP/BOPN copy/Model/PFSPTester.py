@@ -1,16 +1,16 @@
 
 import torch
-import pandas as pd
+
 import os
 from logging import getLogger
 
-from ATSPEnv import ATSPEnv as Env
-from ATSPModel import BOPN_Model as Model
+from PFSPEnv import PFSPEnv as Env
+from PFSPModel import PFSPModel as Model
 
 from utils.utils import *
 
 
-class ATSPTester:
+class PFSPTester:
     def __init__(self,
                  env_params,
                  model_params,
@@ -50,6 +50,9 @@ class ATSPTester:
 
         # utility
         self.time_estimator = TimeEstimator()
+        self.gaplist = []
+        self.gap_aug_list = []
+        self.total_time = 0
 
     def run(self):
         self.time_estimator.reset()
@@ -64,8 +67,8 @@ class ATSPTester:
 
             remaining = test_num_episode - episode
             batch_size = min(self.tester_params['test_batch_size'], remaining)
-
-            score, aug_score = self._test_one_batch(batch_size)
+            
+            score, aug_score = self._test_one_batch(batch_size,episode)
 
             score_AM.update(score, batch_size)
             aug_score_AM.update(aug_score, batch_size)
@@ -86,7 +89,7 @@ class ATSPTester:
                 self.logger.info(" NO-AUG SCORE: {:.4f} ".format(score_AM.avg))
                 self.logger.info(" AUGMENTATION SCORE: {:.4f} ".format(aug_score_AM.avg))
 
-    def _test_one_batch(self, batch_size):
+    def _test_one_batch(self, batch_size, episode):
 
         # Augmentation
         ###############################################
@@ -99,7 +102,8 @@ class ATSPTester:
         ###############################################
         self.model.eval()
         with torch.no_grad():
-            self.env.load_problems_test(batch_size, aug_factor)
+            
+            self.env.load_problems_test(batch_size)
 
             reset_state, _, _ = self.env.reset()
             self.model.pre_forward(reset_state)
@@ -110,33 +114,38 @@ class ATSPTester:
         while not done:
             selected, _ = self.model(state)
             # shape: (batch, pomo)
-            state, reward, done = self.env.step(selected)
-
+            state, reward, done, _ = self.env.step(selected)
+        
         # Return
         ###############################################
-        
         aug_reward = reward.reshape(aug_factor, batch_size, self.env.sample_size)
         # shape: (augmentation, batch, pomo)
 
-        max_pomo_reward,_ = aug_reward.max(dim=2)  # get best results from pomo
+        max_pomo_reward, _ = (aug_reward).max(dim=2)  # get best results from pomo
         # shape: (augmentation, batch)
+
+        problems = torch.load(
+            f"/home/inuai_11/Bi-NCO/PFSP/BOPN/Dataset/taidata/tai{self.model_params['job_size']}x{self.model_params['machine_size']}_with_ub.pt",
+            map_location="cpu",
+            weights_only=True
+            )
+        ub = problems["ub"].to(self.device)
+
+        numerator = (-max_pomo_reward - ub).clamp(min=0)   # 음수 -> 0
+        gap_mean = (100.0 * numerator / ub).mean()
+        print(aug_reward.size())
+        print(-max_pomo_reward)
+        print(ub)
+        print("gap_mean:", gap_mean)
+
         no_aug_score = -max_pomo_reward[0, :].float().mean()  # negative sign to make positive value
 
         max_aug_pomo_reward, _ = max_pomo_reward.max(dim=0)  # get best results from augmentation
 
-        # shape: (batch,)
         max_pomo_reward_np  = max_aug_pomo_reward.cpu().numpy()
-
-        tour_np = pd.read_csv("/home/inuai_11/Bi-NCO/ATSP/BOPN/Dataset/ATSPL/lkh_result200.csv")["Length"].to_numpy()   # (N,)
-        tours = torch.from_numpy(tour_np).to(self.device).float() # float로 맞추기
-        
-        ub = tours.squeeze(-1)
-
-        numerator = (-max_aug_pomo_reward - ub).clamp(min=0)   # 음수 -> 0
-        gap_mean = (100.0 * numerator / ub).mean()
-        print(gap_mean)
-        # np.savetxt("max_pomo_rewardl1.csv", gap_mean, delimiter=",")
-
+        np.savetxt(f"max_pomo_rewardj{self.env_params['job_size']}m{self.env_params['machine_size']}.csv", -max_pomo_reward_np, delimiter=",")
+    
+        # shape: (batch,)
         aug_score = -max_aug_pomo_reward.float().mean()  # negative sign to make positive value
-
+        
         return no_aug_score.item(), aug_score.item()

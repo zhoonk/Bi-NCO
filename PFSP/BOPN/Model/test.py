@@ -3,7 +3,7 @@
 
 DEBUG_MODE = False
 USE_CUDA = not DEBUG_MODE
-CUDA_DEVICE_NUM = 3
+CUDA_DEVICE_NUM = 2
 
 
 ##########################################################################################
@@ -29,9 +29,9 @@ from PFSPTester import PFSPTester as Tester
 ##########################################################################################
 # parameters
 
-job_size = 20
-machine_size = 10
-trajectory = 128 # node_cnt과 같거나 작아야 함
+job_size = 100
+machine_size = 5
+trajectory = 64 # node_cnt과 같거나 작아야 함
 
 env_params = {
     'job_size': job_size,
@@ -43,6 +43,8 @@ model_params = {
     'job_size': job_size,
     'machine_size': machine_size,
     'trajectory_size': trajectory,
+    'dz_cat': 12,
+    'dz_cont': 4,
     'embedding_dim': 256,
     'sqrt_embedding_dim': 256**(1/2),
     'encoder_layer_num': 6,
@@ -57,8 +59,8 @@ tester_params = {
     'use_cuda': USE_CUDA,
     'cuda_device_num': CUDA_DEVICE_NUM,
     'model_load': {
-        'path': './result/20260207_045628_train__tsp_n20/',  # directory path of pre-trained model and log files saved.
-        'epoch': 1500,  # epoch version of pre-trained model to laod.
+        'path': './result/20,5 lastest/',  # directory path of pre-trained model and log files saved.
+        'epoch':300,  # epoch version of pre-trained model to laod.
     },
     'test_episodes': 10,
     'test_batch_size': 10,

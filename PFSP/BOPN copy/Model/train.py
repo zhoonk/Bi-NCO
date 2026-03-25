@@ -31,7 +31,7 @@ from PFSPTrainer import PFSPTrainer as Trainer
 # parameters
 
 job_size = 20
-machine_size = 10
+machine_size = 5
 trajectory = 64
 
 
@@ -78,22 +78,22 @@ optimizer_params = {
         "weight_decay": 1e-6
     },
     "scheduler": {
-        "milestones": [900, 950],  # 5000 이후부터 감소
-        "gamma": 0.1
+        "milestones": list(range(0, 5001, 100)),  # 5000 이후부터 감소
+        "gamma": 0.97
     }
 }
 
 trainer_params = {
     'use_cuda': USE_CUDA,
     'cuda_device_num': CUDA_DEVICE_NUM,
-    'epochs': 1000,
-    'train_episodes': 100 * 1000,
+    'epochs': 5000,
+    'train_episodes': 10 * 1000,
     'train_batch_size': 200,
     'sample_iteration': 5,
     'eps_clip': 0.2,
     'logging': {
-        'model_save_interval': 100,
-        'img_save_interval': 100,
+        'model_save_interval': 500,
+        'img_save_interval': 500,
         'log_image_params_1': {
             'json_foldername': 'log_image_style',
             'filename': 'style_tsp_20.json'
