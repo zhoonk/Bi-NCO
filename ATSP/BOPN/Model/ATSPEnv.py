@@ -4,6 +4,7 @@ import torch
 
 from ATSProblemDef import get_random_problems
 from ATSProblemDefTest import get_random_problems as get_test_problems
+from exp_config import direction_split
 
 
 @dataclass
@@ -31,7 +32,9 @@ class ATSPEnv:
         self.env_params = env_params
         self.node_cnt = env_params['node_cnt']
         self.trajectory_size = env_params['trajectory_size']
-        self.sample_size = 2*self.trajectory_size
+        # first n_fwd rollouts are forward, the remaining n_bwd backward
+        self.n_fwd, self.n_bwd = direction_split(env_params)
+        self.sample_size = self.n_fwd + self.n_bwd
 
         # Const @Load_Problem
         ####################################
@@ -56,6 +59,14 @@ class ATSPEnv:
 
         self.batch_size = self.problems.size(0)
         
+        self.BATCH_IDX = torch.arange(self.batch_size)[:, None].expand(self.batch_size, self.sample_size)
+        self.SAMPLE_IDX = torch.arange(self.sample_size)[None, :].expand(self.batch_size, self.sample_size)
+
+    def load_problems_given(self, problems, aug_factor=1):
+        # problems.shape: (batch, node, node); used for validation and testing
+        self.problems = problems.repeat(aug_factor, 1, 1) if aug_factor > 1 else problems
+        self.batch_size = self.problems.size(0)
+
         self.BATCH_IDX = torch.arange(self.batch_size)[:, None].expand(self.batch_size, self.sample_size)
         self.SAMPLE_IDX = torch.arange(self.sample_size)[None, :].expand(self.batch_size, self.sample_size)
 
@@ -115,8 +126,10 @@ class ATSPEnv:
 
     def _get_total_distance(self):
         
-        node_forward = self.selected_node_list[:,:self.node_cnt]
-        node_backward = self.selected_node_list[:,self.node_cnt:].flip(dims = (2,))
+        # backward rollouts are recorded in construction order; reverse them to obtain the tour.
+        # (The original code split at node_cnt, which is correct only when n_fwd == node_cnt.)
+        node_forward = self.selected_node_list[:, :self.n_fwd]
+        node_backward = self.selected_node_list[:, self.n_fwd:].flip(dims=(2,))
         node_from = torch.cat((node_forward,node_backward),dim=1)
         # shape: (batch, pomo, node)
         node_to = node_from.roll(dims=2, shifts=-1)

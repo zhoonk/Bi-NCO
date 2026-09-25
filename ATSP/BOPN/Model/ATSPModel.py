@@ -4,55 +4,92 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from ATSPModel_LIB import MixedScore_MultiHeadAttention
+from exp_config import direction_split
 
 
 class BOPN_Model(nn.Module):
+    """Bi-NCO model for the ATSP.
+
+    Streams: the encoder returns two embeddings per city. The 'f' (row) stream is
+    computed from the cost matrix D and represents a city in its preceding role
+    (E_pre); the 't' (column) stream is computed from D^T and represents a city in
+    its succeeding role (E_suc).
+
+    decoder_wiring (see exp_config.py):
+      'exchange' : forward  query E_pre, keys/values E_suc; backward query E_suc,
+                   keys/values E_pre (Eqs. (5)-(6) of the paper).
+      'shared'   : both directions use the forward wiring; a learned direction
+                   embedding is added to the query (direction-token baseline, M3).
+      'legacy'   : query and keys come from the same stream (forward f/f,
+                   backward t/t), as in the original ATSP code.
+
+    Rollouts: the first n_fwd samples are forward, the remaining n_bwd backward.
+    """
+
+    WIRING = {
+        # direction: (query stream, key stream, first-node stream)
+        'exchange': {'fwd': ('f', 't', 't'), 'bwd': ('t', 'f', 'f')},
+        'shared':   {'fwd': ('f', 't', 't'), 'bwd': ('f', 't', 't')},
+        'legacy':   {'fwd': ('f', 'f', 't'), 'bwd': ('t', 't', 'f')},
+    }
 
     def __init__(self, **model_params):
         super().__init__()
         self.model_params = model_params
         self.node_cnt = model_params['node_cnt']
-        self.trajectory_size = model_params['trajectory_size']
+        self.n_fwd, self.n_bwd = direction_split(model_params)
+        self.wiring = model_params.get('decoder_wiring', 'exchange')
+        if self.wiring not in self.WIRING:
+            raise ValueError('unknown decoder_wiring {}'.format(self.wiring))
+        self.use_dir_token = (self.wiring == 'shared')
+        self.start_mode = model_params.get('start_mode', 'random')  # 'random' | 'fixed'
         self.cross_encoder = Cross_Encoder(**model_params)
         self.decoder = Decoder(**model_params)
-        self.encoded_nodes_j = None
-        self.encoded_nodes_m = None
-        # shape: (batch, problem, EMBEDDING_DIM)
+        self.encoded = {}
 
     def pre_forward(self, reset_state):
-        self.encoded_nodes_f, self.encoded_nodes_t = self.cross_encoder(reset_state.problems)
+        encoded_f, encoded_t = self.cross_encoder(reset_state.problems)
         # shape: (batch, problem, EMBEDDING_DIM)
-        self.decoder.set_kv(self.encoded_nodes_f, self.encoded_nodes_t)
+        self.encoded = {'f': encoded_f, 't': encoded_t}
+        self.decoder.set_kv(encoded_f, encoded_t)
+
+    def _parts(self):
+        parts = []
+        if self.n_fwd > 0:
+            parts.append(('fwd', 0, self.n_fwd))
+        if self.n_bwd > 0:
+            parts.append(('bwd', self.n_fwd, self.n_fwd + self.n_bwd))
+        return parts
 
     def forward(self, state):
         batch_size = state.BATCH_IDX.size(0)
         sample_size = state.BATCH_IDX.size(1)
 
         if state.current_node is None:
-            # node = torch.arange(self.node_cnt)
-            # selected = torch.cat((node,node),dim=0)[None, :].expand(batch_size, sample_size)
-            selected = torch.randint(
-                low=0,
-                high=self.node_cnt,              # self.node_cnt 미포함
-                size=(batch_size, sample_size),  
-                dtype=torch.long
-            )
+            if self.start_mode == 'fixed':
+                selected = torch.zeros(size=(batch_size, sample_size), dtype=torch.long)
+            else:
+                selected = torch.randint(low=0, high=self.node_cnt, size=(batch_size, sample_size), dtype=torch.long)
             prob = torch.ones(size=(batch_size, sample_size))
 
-            encoded_first_row_f = _get_encoding(self.encoded_nodes_f, selected[:,:self.trajectory_size])
-            encoded_first_row_t = _get_encoding(self.encoded_nodes_t, selected[:,self.trajectory_size:])
-            # shape: (batch, pomo, embedding)
-            self.decoder.set_q1(encoded_first_row_f, encoded_first_row_t)
+            first = {}
+            for d, lo, hi in self._parts():
+                stream = self.WIRING[self.wiring][d][2]
+                first[d] = _get_encoding(self.encoded[stream], selected[:, lo:hi])
+                # shape: (batch, n_d, embedding)
+            self.decoder.set_q1(first.get('fwd'), first.get('bwd'))
 
         else:
-            encoded_last_node_f = _get_encoding(self.encoded_nodes_f, state.current_node[:,:self.trajectory_size])
-            encoded_last_node_t = _get_encoding(self.encoded_nodes_t, state.current_node[:,self.trajectory_size:])
-            # shape: (batch, pomo, embedding)
-            probs_Forward = self.decoder(encoded_last_node_f, ninf_mask=state.ninf_mask[:,:self.trajectory_size])
-            probs_Backward = self.decoder(encoded_last_node_t, ninf_mask=state.ninf_mask[:,self.trajectory_size:], Backward=True)
+            probs_list = []
+            for d, lo, hi in self._parts():
+                q_stream, k_stream, _ = self.WIRING[self.wiring][d]
+                encoded_last_node = _get_encoding(self.encoded[q_stream], state.current_node[:, lo:hi])
+                # shape: (batch, n_d, embedding)
+                dir_idx = (0 if d == 'fwd' else 1) if self.use_dir_token else None
+                probs_list.append(self.decoder(encoded_last_node, ninf_mask=state.ninf_mask[:, lo:hi],
+                                               key_stream=k_stream, direction=d, dir_idx=dir_idx))
+            probs = torch.cat(probs_list, dim=1)
             # shape: (batch, pomo, problem)
-
-            probs = torch.cat((probs_Forward, probs_Backward), dim=1)
 
             if self.training or self.model_params['eval_type'] == 'softmax':
                 while True:
@@ -72,7 +109,7 @@ class BOPN_Model(nn.Module):
                 prob = None
 
         return selected, prob
-    
+
 
 def _get_encoding(encoded_nodes, node_index_to_pick):
     # encoded_nodes.shape: (batch, problem, embedding)
@@ -222,86 +259,76 @@ class Decoder(nn.Module):
 
         self.multi_head_combine = nn.Linear(head_num * qkv_dim, embedding_dim)
 
-        self.k = None  # saved key, for multi-head attention
-        self.v = None  # saved value, for multi-head_attention
-        self.single_head_key = None  # saved, for single-head attention
-        self.q1_f = None  # saved q1, for multi-head attention
-        self.q1_t = None  # saved q1, for multi-head attention
+        # direction token, created only for the 'shared' wiring (M3)
+        if model_params.get('decoder_wiring', 'exchange') == 'shared':
+            self.dir_embedding = nn.Parameter(torch.zeros(2, head_num * qkv_dim))
+            nn.init.normal_(self.dir_embedding, std=0.1)
+        else:
+            self.dir_embedding = None
+
+        self.k = {}  # saved keys per stream, for multi-head attention
+        self.v = {}  # saved values per stream
+        self.single_head_key = {}  # saved per stream, for single-head attention
+        self.q1 = {}  # saved first-node query per direction
 
     def set_kv(self, encoded_nodes_f, encoded_nodes_t):
         # encoded_nodes.shape: (batch, problem, embedding)
         head_num = self.model_params['head_num']
+        for name, enc in (('f', encoded_nodes_f), ('t', encoded_nodes_t)):
+            self.k[name] = reshape_by_heads(self.Wk(enc), head_num=head_num)
+            self.v[name] = reshape_by_heads(self.Wv(enc), head_num=head_num)
+            # shape: (batch, head_num, problem, qkv_dim)
+            self.single_head_key[name] = enc.transpose(1, 2)
+            # shape: (batch, embedding, problem)
 
-        self.k_f = reshape_by_heads(self.Wk(encoded_nodes_f), head_num=head_num)
-        self.v_f = reshape_by_heads(self.Wv(encoded_nodes_f), head_num=head_num)
-        # shape: (batch, head_num, pomo, qkv_dim)
-        self.single_head_key_f = encoded_nodes_f.transpose(1, 2)
-        # shape: (batch, embedding, problem)
-
-        self.k_t = reshape_by_heads(self.Wk(encoded_nodes_t), head_num=head_num)
-        self.v_t = reshape_by_heads(self.Wv(encoded_nodes_t), head_num=head_num)
-        # shape: (batch, head_num, pomo, qkv_dim)
-        self.single_head_key_t = encoded_nodes_t.transpose(1, 2)
-        # shape: (batch, embedding, problem)
-
-    def set_q1(self, encoded_q1_f,encoded_q1_t):
-        # encoded_q.shape: (batch, n, embedding)  # n can be 1 or pomo
+    def set_q1(self, encoded_q1_fwd, encoded_q1_bwd):
+        # encoded_q1.shape: (batch, n_d, embedding), or None if the direction is unused
         head_num = self.model_params['head_num']
+        self.q1 = {}
+        if encoded_q1_fwd is not None:
+            self.q1['fwd'] = reshape_by_heads(self.Wq_1(encoded_q1_fwd), head_num=head_num)
+        if encoded_q1_bwd is not None:
+            self.q1['bwd'] = reshape_by_heads(self.Wq_1(encoded_q1_bwd), head_num=head_num)
+        # shape: (batch, head_num, n_d, qkv_dim)
 
-        self.q1_f = reshape_by_heads(self.Wq_1(encoded_q1_f), head_num=head_num)
-        self.q1_t = reshape_by_heads(self.Wq_1(encoded_q1_t), head_num=head_num)
-        # shape: (batch, head_num, n, qkv_dim)
-
-    def forward(self, encoded_q0, ninf_mask, Backward = False):
-        # encoded_last_node.shape: (batch, pomo, embedding)
-        # ninf_mask.shape: (batch, pomo, problem)
+    def forward(self, encoded_q0, ninf_mask, key_stream, direction, dir_idx=None):
+        # encoded_q0.shape: (batch, n_d, embedding)
+        # ninf_mask.shape: (batch, n_d, problem)
         head_num = self.model_params['head_num']
-
-        # backward와 forward 분기처리 잘못 되었음.
-        # 그러나 단순 인코더 출처 구분이니 문제는 안됨 추후 수정
-        if Backward == True:
-            k = self.k_t
-            v = self.v_t
-            single_head_key = self.single_head_key_t
-            q1 = self.q1_f
-        else:
-            k = self.k_f
-            v = self.v_f
-            single_head_key = self.single_head_key_f
-            q1 = self.q1_t
-            
+        k = self.k[key_stream]
+        v = self.v[key_stream]
+        single_head_key = self.single_head_key[key_stream]
 
         #  Multi-Head Attention
         #######################################################
         q0 = reshape_by_heads(self.Wq_0(encoded_q0), head_num=head_num)
-        # shape: (batch, head_num, pomo, qkv_dim)
+        # shape: (batch, head_num, n_d, qkv_dim)
 
-        q = q1 + q0
-        # shape: (batch, head_num, pomo, qkv_dim)
+        q = self.q1[direction] + q0
+        if dir_idx is not None:
+            q = q + self.dir_embedding[dir_idx].reshape(1, head_num, 1, -1)
+        # shape: (batch, head_num, n_d, qkv_dim)
 
         out_concat = multi_head_attention(q, k, v, rank3_ninf_mask=ninf_mask)
-        # shape: (batch, pomo, head_num*qkv_dim)
+        # shape: (batch, n_d, head_num*qkv_dim)
 
         mh_atten_out = self.multi_head_combine(out_concat)
-        # shape: (batch, pomo, embedding)
+        # shape: (batch, n_d, embedding)
 
         #  Single-Head Attention, for probability calculation
         #######################################################
         score = torch.matmul(mh_atten_out, single_head_key)
-        # shape: (batch, pomo, problem)
+        # shape: (batch, n_d, problem)
 
         sqrt_embedding_dim = self.model_params['sqrt_embedding_dim']
         logit_clipping = self.model_params['logit_clipping']
 
         score_scaled = score / sqrt_embedding_dim
-        # shape: (batch, pomo, problem)
-
         score_clipped = logit_clipping * torch.tanh(score_scaled)
-
         score_masked = score_clipped + ninf_mask
 
         probs = F.softmax(score_masked, dim=2)
-        # shape: (batch, pomo, problem)
+        # shape: (batch, n_d, problem)
 
         return probs
 

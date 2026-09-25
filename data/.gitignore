@@ -1,0 +1,7 @@
+# instance files can exceed the GitHub 100 MB limit, so they are not tracked by default
+*.pt
+*.pth
+# reference results (small) are tracked even though the root .gitignore ignores *.csv
+!*.csv
+# the ATSP100 subset (first 1000 instances, 38 MB) is tracked
+!ATSP/problems100.pt

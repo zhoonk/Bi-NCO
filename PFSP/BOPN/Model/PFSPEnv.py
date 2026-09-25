@@ -2,7 +2,8 @@
 from dataclasses import dataclass
 import torch
 
-from PFSProblemDef import get_random_problems
+from PFSProblemDef import get_random_problems, augment_PFSP
+from exp_config import direction_split
 from PFSProblemDefTest import get_random_problems as get_random_problems_test 
 
 
@@ -31,8 +32,10 @@ class PFSPEnv:
         self.env_params = env_params
         self.job_size = env_params['job_size']
         self.machine_size = env_params['machine_size']
-        self.sample_size = 2*env_params['trajectory_size']
         self.trajectory_size = env_params['trajectory_size']
+        # first n_fwd rollouts are forward, the remaining n_bwd backward
+        self.n_fwd, self.n_bwd = direction_split(env_params)
+        self.sample_size = self.n_fwd + self.n_bwd
 
         # Const @Load_Problem
         ####################################
@@ -64,6 +67,14 @@ class PFSPEnv:
         self.BATCH_IDX = torch.arange(self.batch_size)[:, None].expand(self.batch_size, self.sample_size)
         self.SAMPLE_IDX = torch.arange(self.sample_size)[None, :].expand(self.batch_size, self.sample_size)
     
+    def load_problems_given(self, problems, aug_factor=1):
+        # problems.shape: (batch, job, machine); used for validation and testing
+        self.problems = problems.repeat(aug_factor, 1, 1) if aug_factor > 1 else problems
+        self.batch_size = self.problems.size(0)
+
+        self.BATCH_IDX = torch.arange(self.batch_size)[:, None].expand(self.batch_size, self.sample_size)
+        self.SAMPLE_IDX = torch.arange(self.sample_size)[None, :].expand(self.batch_size, self.sample_size)
+
     def load_problems_test(self, batch_size):
         self.batch_size = batch_size
         
@@ -120,8 +131,9 @@ class PFSPEnv:
 
     def _get_makespan(self):
 
-        selected_node_Forward = self.selected_node_list[:,:self.trajectory_size]
-        selected_node_Backward = self.selected_node_list[:,self.trajectory_size:].flip(dims = (2,))
+        # backward rollouts are recorded in construction order; reverse them to obtain the sequence
+        selected_node_Forward = self.selected_node_list[:, :self.n_fwd]
+        selected_node_Backward = self.selected_node_list[:, self.n_fwd:].flip(dims=(2,))
         selected_node = torch.cat((selected_node_Forward,selected_node_Backward),dim=1)
 
         # 각 머신에서 작업이 끝나는 시간을 저장하는 배열
