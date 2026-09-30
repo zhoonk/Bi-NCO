@@ -6,18 +6,20 @@ import torch
 from logging import getLogger
 
 from PFSPEnv import PFSPEnv as Env
-from PFSPModel import PFSPModel as Model
+from PFSPModel import build_model as Model
 
 from torch.optim import Adam as Optimizer
 from torch.optim.lr_scheduler import MultiStepLR as Scheduler
 
 from utils.utils import *
 from exp_config import DEFAULTS
-from exp_utils import set_seed, GradStats, CsvLog, WandbLog, load_tensor, load_reference, gap_percent, count_parameters
+from exp_utils import set_seed, GradStats, AlphaStats, CsvLog, WandbLog, load_tensor, load_reference, gap_percent, count_parameters
 
 
 EPOCH_FIELDS = ['epoch', 'lr', 'train_score', 'train_loss', 'grad_var', 'grad_norm',
-                'epoch_time_s', 'peak_mem_mb', 'val_gap']
+                'epoch_time_s', 'peak_mem_mb', 'val_gap',
+                'alpha_mean', 'alpha_p50', 'alpha_p90', 'alpha_p95', 'alpha_p99', 'alpha_max',
+                'alpha_zero_frac', 'alpha_clip_frac']
 
 
 class PFSPTrainer:
@@ -82,6 +84,9 @@ class PFSPTrainer:
 
         # measurement
         self.grad_stats = GradStats()
+        if self.opts['weighting'] == 'clipped' and self.opts['clip_value'] is None:
+            raise ValueError('M8 (clipped weights) needs --clip_value')
+        self.alpha_stats = AlphaStats(self.opts['clip_value'] if self.opts['weighting'] == 'clipped' else None)
         self.epoch_log = CsvLog(os.path.join(self.result_folder, 'epoch_log.csv'), EPOCH_FIELDS)
         self.val = self._load_validation(trainer_params.get('validation'))
         self.wandb = WandbLog(trainer_params.get('wandb'),
@@ -128,16 +133,18 @@ class PFSPTrainer:
             self.result_log.append('train_loss', epoch, train_loss)
 
             grad_var, grad_norm = self.grad_stats.summary()
+            alpha = self.alpha_stats.summary()
             val_gap = ''
             if self.val is not None and (epoch % self.val['every'] == 0 or epoch == 1):
-                val_gap = self._validate()
+                val_gap, costs = self._validate()
+                self._write_val_costs(epoch, costs)
                 self.logger.info('Epoch {:3d}: validation gap {:.4f}%'.format(epoch, val_gap))
             self.epoch_log.write(epoch=epoch, lr=self.optimizer.param_groups[0]['lr'], train_score=train_score,
                                  train_loss=train_loss, grad_var=grad_var, grad_norm=grad_norm,
-                                 epoch_time_s=epoch_time, peak_mem_mb=peak_mem, val_gap=val_gap)
+                                 epoch_time_s=epoch_time, peak_mem_mb=peak_mem, val_gap=val_gap, **alpha)
             self.wandb.log(epoch, lr=self.optimizer.param_groups[0]['lr'], train_score=train_score,
                            train_loss=train_loss, grad_var=grad_var, grad_norm=grad_norm,
-                           epoch_time_s=epoch_time, peak_mem_mb=peak_mem, val_gap=val_gap)
+                           epoch_time_s=epoch_time, peak_mem_mb=peak_mem, val_gap=val_gap, **alpha)
 
             ############################
             # Logs & Checkpoint
@@ -191,6 +198,7 @@ class PFSPTrainer:
         score_AM = AverageMeter()
         loss_AM = AverageMeter()
         self.grad_stats.reset()
+        self.alpha_stats.reset()
 
         train_num_episode = self.trainer_params['train_episodes']
         episode = 0
@@ -270,6 +278,7 @@ class PFSPTrainer:
     def _compute_loss(self, reward, prob_list):
         losses = []
         for lo, hi in self._groups(reward.size(1)):
+            self.alpha_stats.add(self._alpha(reward[:, lo:hi]), reward[:, lo:hi])
             if self.opts['loss_type'] == 'pg':
                 losses.append(self._pg_loss(reward[:, lo:hi], prob_list[:, lo:hi]))
             else:
@@ -284,10 +293,7 @@ class PFSPTrainer:
         if self.opts['weighting'] == 'uniform':
             loss_weight = torch.ones(size=(batch_size, 1))  # M6
         else:
-            max_reward = reward.max(dim=1, keepdim=True).values  # [batch, 1]
-            mean_reward = reward.mean(dim=1, keepdim=True)  # [batch, 1]
-            pomo_variance = reward.var(dim=1, keepdim=True, unbiased=False)  # [batch, 1]
-            loss_weight = (max_reward - mean_reward) / torch.sqrt(pomo_variance + 1e-8)  # [batch, 1]
+            loss_weight = self._alpha(reward)  # [batch, 1]
             if self.opts['weighting'] == 'clipped':
                 loss_weight = loss_weight.clamp(max=self.opts['clip_value'])  # M8
 
@@ -299,6 +305,14 @@ class PFSPTrainer:
         SIL_loss = -batch_loss.mean()
 
         return SIL_loss
+
+    @staticmethod
+    def _alpha(reward):
+        # standardized weight of the best rollout: (r* - mean) / sqrt(var + eps), eps = 1e-8
+        max_reward = reward.max(dim=1, keepdim=True).values  # [batch, 1]
+        mean_reward = reward.mean(dim=1, keepdim=True)  # [batch, 1]
+        pomo_variance = reward.var(dim=1, keepdim=True, unbiased=False)  # [batch, 1]
+        return (max_reward - mean_reward) / torch.sqrt(pomo_variance + 1e-8)
 
     def _pg_loss(self, reward, prob_list):
         # M7: REINFORCE with the shared (mean) baseline of POMO, within each rollout group
@@ -317,7 +331,7 @@ class PFSPTrainer:
         self.model.eval()
         saved_eval_type = self.model.model_params['eval_type']
         self.model.model_params['eval_type'] = self.val['eval_type']
-        gaps = []
+        gaps, costs = [], []
         devices = [torch.cuda.current_device()] if self.trainer_params['use_cuda'] else []
         with torch.no_grad(), torch.random.fork_rng(devices=devices):
             torch.manual_seed(self.val['seed'])
@@ -333,7 +347,18 @@ class PFSPTrainer:
                     state, reward, done, _ = self.env.step(selected)
                 best_cost = -reward.max(dim=1).values
                 gaps.append(gap_percent(best_cost.float(), ref[lo:hi], clamp_negative=self.val['clamp']))
+                costs.append(best_cost.float())
         self.model.model_params['eval_type'] = saved_eval_type
         if was_training:
             self.model.train()
-        return float(torch.cat(gaps).mean())
+        return float(torch.cat(gaps).mean()), torch.cat(costs).tolist()
+
+    def _write_val_costs(self, epoch, costs):
+        # best cost of every validation instance at this epoch, one row per validation, so that
+        # the gap to any reference (e.g. an upper or a lower bound) can be computed afterwards
+        path = os.path.join(self.result_folder, 'val_costs.csv')
+        new = not os.path.exists(path)
+        with open(path, 'a') as f:
+            if new:
+                f.write('epoch,' + ','.join('i{}'.format(k) for k in range(len(costs))) + '\n')
+            f.write('{},'.format(epoch) + ','.join('{:.6g}'.format(c) for c in costs) + '\n')

@@ -71,6 +71,43 @@ class CsvLog:
             csv.writer(f).writerow([row.get(k, '') for k in self.fields])
 
 
+class AlphaStats:
+    """Distribution of the standardized pseudo-label weight alpha within an epoch.
+
+    alpha = (r* - mean) / sqrt(var + eps) is computed for every rollout group (one
+    instance and one direction) whatever the loss, so that runs can be compared.
+    The value is before any clipping. 'zero' counts groups whose rollouts all have
+    the same cost (sigma = 0, where alpha = 0 and the group gives no update).
+    """
+
+    QUANTILES = (0.5, 0.9, 0.95, 0.99)
+
+    def __init__(self, clip_value=None):
+        self.clip_value = clip_value
+        self.reset()
+
+    def reset(self):
+        self.values = []
+        self.zero = 0
+
+    def add(self, alpha, reward):
+        self.values.append(alpha.detach().reshape(-1).float())
+        self.zero += int((reward.max(dim=1).values == reward.min(dim=1).values).sum())
+
+    def summary(self):
+        if not self.values:
+            return {}
+        a = torch.cat(self.values)
+        q = torch.quantile(a, torch.tensor(self.QUANTILES, device=a.device))
+        out = {'alpha_mean': float(a.mean()), 'alpha_max': float(a.max()),
+               'alpha_zero_frac': self.zero / a.numel()}
+        for p, v in zip(self.QUANTILES, q.tolist()):
+            out['alpha_p{}'.format(int(round(p * 100)))] = v
+        if self.clip_value is not None:
+            out['alpha_clip_frac'] = float((a > self.clip_value).float().mean())
+        return out
+
+
 class WandbLog:
     """Optional Weights & Biases logging of the per-epoch measurements.
 
@@ -92,12 +129,18 @@ class WandbLog:
                               tags=cfg.get('tags') or None, config=config, dir=run_dir)
 
     def upload_csv(self):
+        # epoch_log.csv and, if present, val_costs.csv from the same result folder
         if self.run is None:
             return
         import shutil
-        dst = os.path.join(self.run.dir, os.path.basename(self.csv_path))
-        shutil.copyfile(self.csv_path, dst)
-        self.wandb.save(dst, base_path=self.run.dir, policy='now')
+        folder = os.path.dirname(self.csv_path)
+        for name in (os.path.basename(self.csv_path), 'val_costs.csv'):
+            src = os.path.join(folder, name)
+            if not os.path.exists(src):
+                continue
+            dst = os.path.join(self.run.dir, name)
+            shutil.copyfile(src, dst)
+            self.wandb.save(dst, base_path=self.run.dir, policy='now')
 
     def log(self, epoch, **metrics):
         if self.run is None:

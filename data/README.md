@@ -15,9 +15,14 @@ The validation curves use the test sets; no checkpoint is selected with them
 
 ## PFSP (`data/PFSP/`)
 
+Created by `PFSP/BOPN/Model/make_val_data.py --benchmark_dir <dir with taiJxM.npy, taiJxM_ub.npy>`.
+
 | File | Content |
 |---|---|
-| `tai20x10_with_ub.pt` | Taillard 20x10 instances, dict with keys `data` (processing times) and `ub` (upper bounds) |
+| `val_random20x10.pt` | Validation set for the training curves: 200 random 20x10 instances from the training distribution (processing times uniform on {1,...,99}, fixed seed 20261001), dict with `data` (200, 20, 10) and `lb` (Taillard lower bounds) |
+| `taiJxM.pt` | Taillard instances (J jobs, M machines): `data` (10, J, M), `ub` (best-known upper bounds), `lb` (Taillard lower bounds). Used for the final evaluation |
+
+The lower bound is that of Taillard (1993). It matches the published bounds of ta001-ta010 and is at most the best-known upper bound on every instance.
 
 Other paths can be used without moving files, e.g.
 `ATSP_VAL=/path/problems100.pt ATSP_VAL_REF=/path/lkh_result100.csv bash run_v4.sh atsp`.

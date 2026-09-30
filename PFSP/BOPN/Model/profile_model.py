@@ -23,7 +23,7 @@ from torch.utils.flop_counter import FlopCounterMode
 from exp_config import resolve_variant
 from exp_utils import count_parameters, set_seed
 from PFSPEnv import PFSPEnv
-from PFSPModel import PFSPModel
+from PFSPModel import build_model
 from PFSProblemDef import get_random_problems
 
 
@@ -32,13 +32,14 @@ def build(variant, job, machine, trajectory):
     model_params = {
         'job_size': job, 'machine_size': machine, 'trajectory_size': trajectory, 'dz_cat': 12, 'dz_cont': 4,
         'direction_mode': opts['direction_mode'], 'decoder_wiring': opts['decoder_wiring'],
+        'encoder_coupling': opts['encoder_coupling'], 'architecture': opts['architecture'],
         'embedding_dim': 256, 'sqrt_embedding_dim': 256**(1/2), 'encoder_layer_num': 6,
         'qkv_dim': 16, 'head_num': 16, 'ms_hidden_dim': 16, 'ms_layer1_init': (1/2)**(1/2),
         'ms_layer2_init': (1/16)**(1/2), 'sqrt_qkv_dim': 16**(1/2), 'logit_clipping': 10,
         'ff_hidden_dim': 512, 'eval_type': 'argmax',
     }
     env = PFSPEnv(job_size=job, machine_size=machine, trajectory_size=trajectory, direction_mode=opts['direction_mode'])
-    return PFSPModel(**model_params), env
+    return build_model(**model_params), env
 
 
 def rollout(model, env, problems):

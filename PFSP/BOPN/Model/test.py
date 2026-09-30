@@ -73,6 +73,8 @@ model_params = {
     'n_fwd': args.n_fwd,
     'n_bwd': args.n_bwd,
     'decoder_wiring': opts['decoder_wiring'],
+    'encoder_coupling': opts['encoder_coupling'],
+    'architecture': opts['architecture'],
     'dz_cat': 12,
     'dz_cont': 4,
     'embedding_dim': 256,
@@ -108,7 +110,8 @@ if args.ckpt2_dir:
     opts2 = resolve_variant(args.variant2)
     env2 = dict(env_params, n_fwd=args.n_fwd2, n_bwd=args.n_bwd2, trajectory_size=max(args.n_fwd2, args.n_bwd2, 1))
     model2 = dict(model_params, n_fwd=args.n_fwd2, n_bwd=args.n_bwd2, trajectory_size=max(args.n_fwd2, args.n_bwd2, 1),
-                  decoder_wiring=opts2['decoder_wiring'])
+                  decoder_wiring=opts2['decoder_wiring'], encoder_coupling=opts2['encoder_coupling'],
+                  architecture=opts2['architecture'])
     tester_params['model2'] = {'env_params': env2, 'model_params': model2,
                                'model_load': {'path': args.ckpt2_dir, 'epoch': args.ckpt2_epoch}}
 

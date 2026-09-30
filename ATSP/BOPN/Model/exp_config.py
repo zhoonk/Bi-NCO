@@ -10,7 +10,7 @@ DEFAULTS = {
     'decoder_wiring': 'exchange',  # 'exchange' | 'shared' | 'legacy'
     'pseudo_label': 'separate',    # 'separate' | 'global'
     'weighting': 'adaptive',       # 'adaptive' | 'uniform' | 'clipped'
-    'clip_value': 2.0,             # upper bound of the pseudo-label weight for 'clipped' (M8)
+    'clip_value': None,            # upper bound of alpha for 'clipped' (M8); must be given (--clip_value)
     'loss_type': 'si',             # 'si' (self-improvement) | 'pg' (REINFORCE, shared baseline)
     'transpose_aug': False,        # ATSP only: randomly transpose training cost matrices
 }

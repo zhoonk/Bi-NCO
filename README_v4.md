@@ -26,17 +26,19 @@ folders are used; `UOPN` and `BOPN copy` are left unchanged.
 | M5 | global best-of-2N pseudo-label | IA-R1-C2; IA-R2-C8 |
 | M6 | uniform pseudo-label weights | IA-R2-C3, C8 |
 | M7 | REINFORCE with the POMO shared baseline instead of self-improvement | IA-R1-C5; IA-R2-C3 |
-| M8 | Standardized pseudo-label weight clipped at `clip_value` (default 2.0, `--clip_value`) | IA-R2-C8 |
+| M8 | Standardized pseudo-label weight clipped at `--clip_value` (required; e.g. the 99th percentile of alpha logged by M0) | IA-R2-C8 |
 | LEGACY | ATSP only: decoder wiring of the previous code | reproduction |
 
 ## Running
 
 Step-by-step guide for the ATSP training runs on a new Linux server (environment, wandb login, tmux, recovery): `RUN_ATSP.md`.
+Guide for the PFSP training runs (separate clone, timing, experiment ids P-T1..P-T14): `RUN_PFSP.md`.
 
 ```bash
 bash run_v4.sh timing     # stage 0: time per epoch (read result/*timing*/epoch_log.csv)
 bash run_v4.sh atsp       # M0, M1, M3, M4, all with the full 5000 epochs
-REDUCED_EPOCHS=... bash run_v4.sh pfsp   # reduced budget, decided from stage 0
+bash run_v4.sh timing-pfsp                 # PFSP time per epoch (M0, M7, SEDD)
+PFSP_EPOCHS=... bash run_v4.sh pfsp       # P-T1..P-T14 except P-T12; all with the same PFSP_EPOCHS
 bash run_v4.sh profile    # parameters, FLOPs, inference time, memory (IA-R1-C13)
 ```
 

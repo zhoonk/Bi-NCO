@@ -6,7 +6,7 @@ import torch
 from logging import getLogger
 
 from PFSPEnv import PFSPEnv as Env
-from PFSPModel import PFSPModel as Model
+from PFSPModel import build_model as Model
 
 from utils.utils import *
 from exp_utils import load_tensor, load_reference, gap_percent, CsvLog

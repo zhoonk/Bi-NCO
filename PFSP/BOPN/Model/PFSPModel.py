@@ -6,6 +6,16 @@ import torch.nn.functional as F
 from exp_config import direction_split
 
 
+def build_model(**model_params):
+    """PFSPModel (DESD, default) or PFSPModel_SEDD, chosen by model_params['architecture']."""
+    architecture = model_params.get('architecture', 'desd')
+    if architecture == 'desd':
+        return PFSPModel(**model_params)
+    if architecture == 'sedd':
+        return PFSPModel_SEDD(**model_params)
+    raise ValueError('unknown architecture {}'.format(architecture))
+
+
 class PFSPModel(nn.Module):
     """Bi-NCO model for the PFSP.
 
@@ -165,21 +175,7 @@ class Cross_Encoder(nn.Module):
         self.end.data.uniform_(-1, 1)
 
     def compute_normalized_matrices(self, data):
-
-        B, N, _ = data.shape
-    
-        # 배치마다 min, max 계산 (dim=(1,2)로 전체 N x N에서)
-        min_vals = data.view(B, -1).min(dim=1)[0].view(B, 1, 1)
-        max_vals = data.view(B, -1).max(dim=1)[0].view(B, 1, 1)
-
-        # 0으로 나눔 방지 (max == min일 경우)
-        range_vals = max_vals - min_vals
-        range_vals[range_vals == 0] = 1.0
-
-        # 정규화
-        scaled_data = (data - min_vals) / range_vals
-        
-        return scaled_data
+        return normalize_processing_times(data)
     
     def forward(self, data):
         # col_emb.shape: (batch, col_cnt, embedding)
@@ -202,18 +198,64 @@ class Cross_Encoder(nn.Module):
         return d_out1[:,1:], d_out2[:,1:], d_out1[:,0], d_out2[:,0]
 
 
+def normalize_processing_times(data):
+    # min-max scaling per instance over the whole (job, machine) matrix
+    B, N, _ = data.shape
+
+    min_vals = data.view(B, -1).min(dim=1)[0].view(B, 1, 1)
+    max_vals = data.view(B, -1).max(dim=1)[0].view(B, 1, 1)
+
+    # avoid division by zero (max == min)
+    range_vals = max_vals - min_vals
+    range_vals[range_vals == 0] = 1.0
+
+    scaled_data = (data - min_vals) / range_vals
+
+    return scaled_data
+
+
+class Single_Encoder(nn.Module):
+    """SEDD encoder: one stream of job embeddings updated by self-attention.
+
+    Same layer count and block (EncodingBlock) as a stream of Cross_Encoder; there
+    are no start/end tokens in the encoder (SEDD keeps them as plain parameters).
+    """
+
+    def __init__(self, **model_params):
+        super().__init__()
+        encoder_layer_num = model_params['encoder_layer_num']
+        self.layers = nn.ModuleList([EncodingBlock(**model_params) for _ in range(encoder_layer_num)])
+        self.embedding = nn.Linear(model_params['machine_size'], model_params['embedding_dim'])
+
+    def forward(self, data):
+        out = self.embedding(normalize_processing_times(data).float())
+        for layer in self.layers:
+            out = layer(out, out)
+        return out
+        # shape: (batch, job, embedding)
+
+
 class EncoderLayer(nn.Module):
     def __init__(self, **model_params):
         super().__init__()
         self.row_encoding_block = EncodingBlock(**model_params)
         self.col_encoding_block = EncodingBlock(**model_params)
+        # 'cross' (default): each stream attends to the other stream (coupled)
+        # 'self' (M9): each stream attends only to itself (uncoupled); same parameters
+        self.coupling = model_params.get('encoder_coupling', 'cross')
+        if self.coupling not in ('cross', 'self'):
+            raise ValueError('unknown encoder_coupling {}'.format(self.coupling))
 
     def forward(self, row_emb, col_emb):
         # row_emb.shape: (batch, row_cnt, embedding)
         # col_emb.shape: (batch, col_cnt, embedding)
         # cost_mat.shape: (batch, row_cnt, col_cnt)
-        row_emb_out = self.row_encoding_block(row_emb, col_emb)
-        col_emb_out = self.col_encoding_block(col_emb, row_emb)
+        if self.coupling == 'cross':
+            row_emb_out = self.row_encoding_block(row_emb, col_emb)
+            col_emb_out = self.col_encoding_block(col_emb, row_emb)
+        else:
+            row_emb_out = self.row_encoding_block(row_emb, row_emb)
+            col_emb_out = self.col_encoding_block(col_emb, col_emb)
 
         return row_emb_out, col_emb_out
 
@@ -298,14 +340,21 @@ class PFSP_Decoder(nn.Module):
 
         self.feed_forward = Feed_Forward_Module(**model_params)
 
+    def _query_proj(self, direction):
+        return self.Wq
+
+    def _key_projs(self, direction):
+        return self.Wk, self.Wv, self.Wp
+
     def set_kv(self, kv):
         # kv[direction].shape: (batch*n_d, job, embedding+dz)
         head_num = self.model_params['head_num']
         self.k, self.v, self.single_head_key = {}, {}, {}
         for d, enc in kv.items():
-            self.k[d] = reshape_by_heads(self.Wk(enc), head_num=head_num)
-            self.v[d] = reshape_by_heads(self.Wv(enc), head_num=head_num)
-            self.single_head_key[d] = self.Wp(enc).transpose(1, 2)
+            Wk, Wv, Wp = self._key_projs(d)
+            self.k[d] = reshape_by_heads(Wk(enc), head_num=head_num)
+            self.v[d] = reshape_by_heads(Wv(enc), head_num=head_num)
+            self.single_head_key[d] = Wp(enc).transpose(1, 2)
 
     def forward(self, encoded_node, encoded_last_node, latent_vector, ninf_mask, direction, dir_idx=None):
         # encoded_node.shape: (batch, job, embedding), query stream
@@ -325,7 +374,7 @@ class PFSP_Decoder(nn.Module):
         cnt = valid.sum(dim=-1, keepdim=True).clamp_min(1.0)
         unvisited_node_avg = unvisited_node / cnt
 
-        context_embedding = self.Wq(torch.cat([encoded_last_node, unvisited_node_avg, latent_vector], dim=-1))
+        context_embedding = self._query_proj(direction)(torch.cat([encoded_last_node, unvisited_node_avg, latent_vector], dim=-1))
         if dir_idx is not None:
             context_embedding = context_embedding + self.dir_embedding[dir_idx]
         reshaped_context_emb = context_embedding.reshape(batch_size*trajectory_size, 1, context_embedding.size(-1))
@@ -353,6 +402,81 @@ class PFSP_Decoder(nn.Module):
         probs = F.softmax(score_masked, dim=2)
 
         return probs
+
+
+class PFSP_Decoder_Dual(PFSP_Decoder):
+    """SEDD decoder: role-specific projections, 'f' (preceding role) and 't' (succeeding role).
+
+    The role exchange happens in the projections: forward queries use the f projection
+    and keys/values/pointer keys the t projections; backward the reverse. Everything
+    else (feed-forward, multi_head_combine, clipping) is shared as in PFSP_Decoder.
+    """
+
+    QUERY_ROLE = {'fwd': 'f', 'bwd': 't'}
+    KEY_ROLE = {'fwd': 't', 'bwd': 'f'}
+
+    def __init__(self, **model_params):
+        super().__init__(**model_params)
+        embedding_dim = model_params['embedding_dim']
+        hq = model_params['head_num'] * model_params['qkv_dim']
+        dz = model_params['dz_cont'] + model_params['dz_cat']
+        del self.Wq, self.Wk, self.Wv, self.Wp   # replaced by the role-specific sets
+        self.Wq_role = nn.ModuleDict({r: nn.Linear(dz + 2 * embedding_dim, hq, bias=False) for r in ('f', 't')})
+        self.Wk_role = nn.ModuleDict({r: nn.Linear(dz + embedding_dim, hq, bias=False) for r in ('f', 't')})
+        self.Wv_role = nn.ModuleDict({r: nn.Linear(dz + embedding_dim, hq, bias=False) for r in ('f', 't')})
+        self.Wp_role = nn.ModuleDict({r: nn.Linear(dz + embedding_dim, hq, bias=False) for r in ('f', 't')})
+
+    def _query_proj(self, direction):
+        return self.Wq_role[self.QUERY_ROLE[direction]]
+
+    def _key_projs(self, direction):
+        r = self.KEY_ROLE[direction]
+        return self.Wk_role[r], self.Wv_role[r], self.Wp_role[r]
+
+
+class PFSPModel_SEDD(PFSPModel):
+    """SEDD: single encoder, dual (role-specific) decoder projections.
+
+    Differs from PFSPModel (DESD) only in (1) one self-attention encoder stream H
+    used for both roles, (2) role-specific decoder projections (PFSP_Decoder_Dual),
+    and (3) start/end tokens that are plain parameters, not passed through the
+    encoder (as in the original SEDD code). The noise z (fixed per rollout, in the
+    query and the keys/values), the decoder feed-forward, the decoding rule, the
+    environment and the training loop are those of PFSPModel.
+    """
+
+    def __init__(self, **model_params):
+        if model_params.get('decoder_wiring', 'exchange') != 'exchange':
+            raise ValueError('SEDD needs the role exchange (decoder_wiring=exchange)')
+        if model_params.get('encoder_coupling', 'cross') != 'cross':
+            raise ValueError('encoder_coupling does not apply to SEDD')
+        super().__init__(**model_params)
+        embedding_dim = model_params['embedding_dim']
+        del self.cross_encoder
+        self.encoder = Single_Encoder(**model_params)
+        self.decoder = PFSP_Decoder_Dual(**model_params)
+        self.start = nn.Parameter(torch.empty(1, embedding_dim))
+        self.start.data.uniform_(-1, 1)
+        self.end = nn.Parameter(torch.empty(1, embedding_dim))
+        self.end.data.uniform_(-1, 1)
+
+    def pre_forward(self, reset_state):
+        h = self.encoder(reset_state.problems)
+        # shape: (batch, job, embedding)
+        batch_size = h.size(0)
+        # both roles read the same encoding; the decoder projections tell them apart
+        self.encoded = {'f': h, 't': h}
+        self.token = {'f': self.start.expand(batch_size, -1), 't': self.end.expand(batch_size, -1)}
+        latent_dimension = self.dz_cont + self.dz_cat
+
+        kv = {}
+        for d, lo, hi in self._parts():
+            n_d = hi - lo
+            self.latent[d] = self.set_z(batch_size, n_d)
+            latent_emb = self.latent[d].reshape(batch_size * n_d, 1, latent_dimension) \
+                .expand(batch_size * n_d, self.job_size, latent_dimension)
+            kv[d] = torch.cat([h.repeat_interleave(n_d, dim=0), latent_emb], dim=-1)
+        self.decoder.set_kv(kv)
 
 
 ########################################

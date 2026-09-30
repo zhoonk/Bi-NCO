@@ -5,3 +5,5 @@
 !*.csv
 # the ATSP100 subset (first 1000 instances, 38 MB) is tracked
 !ATSP/problems100.pt
+# small PFSP files (Taillard instances with bounds, random validation set) are tracked
+!PFSP/*.pt

@@ -25,7 +25,7 @@ from exp_config import resolve_variant
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument('--variant', default='M0', help='M0..M8 except M4 (see exp_config.py)')
+    p.add_argument('--variant', default='M0', help='M0..M9 except M4, or SEDD (see exp_config.py)')
     p.add_argument('--seed', type=int, default=None)
     p.add_argument('--job', type=int, default=20)
     p.add_argument('--machine', type=int, default=10)
@@ -34,7 +34,7 @@ def parse_args():
     p.add_argument('--episodes', type=int, default=10000, help='instances per epoch')
     p.add_argument('--batch', type=int, default=200)
     p.add_argument('--lr', type=float, default=1e-4)
-    p.add_argument('--clip_value', type=float, default=None, help='weight bound for M8 (default in exp_config.py)')
+    p.add_argument('--clip_value', type=float, default=None, help='upper bound of alpha for M8 (required for M8; choose from the alpha distribution of M0)')
     p.add_argument('--cuda', type=int, default=0, help='CUDA device index; -1 for CPU')
     p.add_argument('--save_interval', type=int, default=500)
     p.add_argument('--no_save', action='store_true', help='do not save checkpoints (timing runs)')
@@ -81,6 +81,8 @@ model_params = {
     'trajectory_size': args.trajectory,
     'direction_mode': opts['direction_mode'],
     'decoder_wiring': opts['decoder_wiring'],
+    'encoder_coupling': opts['encoder_coupling'],
+    'architecture': opts['architecture'],
     'dz_cat': 12,
     'dz_cont': 4,
     'embedding_dim': 256,

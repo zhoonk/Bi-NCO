@@ -33,7 +33,7 @@ def parse_args():
     p.add_argument('--episodes', type=int, default=10000, help='instances per epoch')
     p.add_argument('--batch', type=int, default=200)
     p.add_argument('--lr', type=float, default=1e-4)
-    p.add_argument('--clip_value', type=float, default=None, help='weight bound for M8 (default in exp_config.py)')
+    p.add_argument('--clip_value', type=float, default=None, help='upper bound of alpha for M8 (required for M8; choose from the alpha distribution of M0)')
     p.add_argument('--cuda', type=int, default=0, help='CUDA device index; -1 for CPU')
     p.add_argument('--save_interval', type=int, default=500)
     p.add_argument('--no_save', action='store_true', help='do not save checkpoints (timing runs)')
