@@ -9,10 +9,15 @@
 # runs (decided from timing-pfsp); every PFSP run uses the same value.
 set -euo pipefail
 
+# draw the training-curve images without a display (a missing X display, e.g. under WSL
+# after the SSH session ends, would otherwise crash the run when an image is saved)
+export MPLBACKEND=${MPLBACKEND:-Agg}
+
 GPU=${GPU:-0}
 ATSP_EPOCHS=5000                           # paper setting, for every ATSP variant
 PFSP_EPOCHS=${PFSP_EPOCHS:-}               # required for the pfsp stage, e.g. PFSP_EPOCHS=5000
 CLIP_VALUE=${CLIP_VALUE:-}                 # required for P-T12 (M8), from the alpha distribution of M0
+PFSP_ACCUM=${PFSP_ACCUM:-1}                # micro-batches per batch of 200 (same gradient); 2 fits a 24 GB GPU
 SAVE_INTERVAL=${SAVE_INTERVAL:-500}
 WANDB=${WANDB:-1}                          # 1: log to wandb (projects bi-nco-atsp, bi-nco-pfsp); 0: off
 
@@ -66,7 +71,7 @@ case "${1:-}" in
   timing-pfsp)
     # two epochs each with the full per-epoch workload; read epoch_time_s in result/*/epoch_log.csv
     for v in M0 M7 SEDD; do
-      (cd $PFSP_DIR && python train.py --variant $v --epochs 2 --no_save --cuda $GPU --desc timing_pfsp20x10_$v)
+      (cd $PFSP_DIR && python train.py --variant $v --epochs 2 --no_save --cuda $GPU --accum $PFSP_ACCUM --desc timing_pfsp20x10_$v)
     done
     tail -n 2 $PFSP_DIR/result/*timing_pfsp*/epoch_log.csv
     ;;
@@ -94,7 +99,7 @@ case "${1:-}" in
         extra="--clip_value $CLIP_VALUE"
       fi
       (cd $PFSP_DIR && python train.py --variant $v --epochs $PFSP_EPOCHS --seed $seed --cuda $GPU \
-          --save_interval $SAVE_INTERVAL $extra $(pfsp_val_args) $(pfsp_wandb_args $id $v $seed) --desc train__pfsp20x10_${id}_${v}_s${seed})
+          --save_interval $SAVE_INTERVAL --accum $PFSP_ACCUM $extra $(pfsp_val_args) $(pfsp_wandb_args $id $v $seed) --desc train__pfsp20x10_${id}_${v}_s${seed})
     done
     ;;
   profile)

@@ -33,6 +33,7 @@ def parse_args():
     p.add_argument('--epochs', type=int, default=5000)
     p.add_argument('--episodes', type=int, default=10000, help='instances per epoch')
     p.add_argument('--batch', type=int, default=200)
+    p.add_argument('--accum', type=int, default=1, help='micro-batches per batch (same gradient, less GPU memory)')
     p.add_argument('--lr', type=float, default=1e-4)
     p.add_argument('--clip_value', type=float, default=None, help='upper bound of alpha for M8 (required for M8; choose from the alpha distribution of M0)')
     p.add_argument('--cuda', type=int, default=0, help='CUDA device index; -1 for CPU')
@@ -116,6 +117,7 @@ trainer_params = {
     'epochs': args.epochs,
     'train_episodes': args.episodes,
     'train_batch_size': args.batch,
+    'accum_steps': args.accum,
     'seed': args.seed,
     'variant': args.variant,
     'pseudo_label': opts['pseudo_label'],

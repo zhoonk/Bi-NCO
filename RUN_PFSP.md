@@ -18,6 +18,7 @@
 - 모든 run은 같은 에폭 수(`PFSP_EPOCHS`)로 학습한다. 값은 3단계의 시간 측정 뒤 계정 소유자가 정한다.
 - 검증 곡선은 무작위 20×10 인스턴스 200개에서 Taillard 하한 대비 gap(LB gap)으로 기록한다. 데이터는 저장소의 `data/PFSP/`에 있다.
 - 필요한 것: NVIDIA GPU, 디스크 여유 **15GB 이상**(체크포인트 1개 약 85MB, run당 `PFSP_EPOCHS/500`개), GitHub와 wandb에 연결할 인터넷.
+- **GPU 메모리:** 배치 200을 한 번에 계산하면 최대 약 28.5GB가 필요하다. 메모리가 그보다 작은 GPU(예: RTX 4090, 24GB)에서는 `PFSP_ACCUM=2`를 붙인다. 배치를 100개씩 두 번에 나눠 계산하고 gradient를 더하는 방식이라 학습은 수학적으로 같고, 최대 메모리는 약 14.4GB가 된다. Windows에서는 메모리가 부족하면 오류 없이 시스템 메모리를 빌려 써서 10배 가까이 느려지므로 반드시 지킨다. 참고로 RTX 4090 + `PFSP_ACCUM=2`에서 에폭당 학습 시간은 약 26초다.
 
 ---
 
@@ -32,6 +33,16 @@ ls data/PFSP/        # val_random20x10.pt 와 tai*.pt 가 있어야 한다
 
 ## 2. Python 환경과 wandb
 
+**Windows + WSL2(Ubuntu)에서 돌릴 때**는 `C:\Users\<사용자>\.wslconfig`에 아래 설정이 있어야 한다. 없으면 SSH 연결이 끊긴 뒤 WSL이 자동으로 꺼져서 학습도 함께 종료된다. 그래픽 기능(WSLg)은 화면 없는 원격 실행에서 반복적으로 충돌하므로 끈다. 설정 뒤 PowerShell에서 `wsl --shutdown`으로 한 번 재시작한다.
+```
+[general]
+instanceIdleTimeout=-1
+
+[wsl2]
+vmIdleTimeout=-1
+guiApplications=false
+```
+
 - **ATSP를 돌린 서버와 계정이면** 같은 conda 환경을 쓰면 되고, wandb도 이미 로그인되어 있다. 이 단계를 건너뛴다.
 - **새 서버면** `RUN_ATSP.md`의 2단계(환경)와 3단계(wandb 로그인)를 그대로 따른다. API 키는 계정 소유자에게 개인 메시지로 받는다.
 
@@ -41,7 +52,7 @@ ls data/PFSP/        # val_random20x10.pt 와 tai*.pt 가 있어야 한다
 ```bash
 cd ~/Bi-NCO-v4-pfsp
 conda activate <환경 이름>
-GPU=0 bash run_v4.sh timing-pfsp
+GPU=0 bash run_v4.sh timing-pfsp            # 24GB GPU라면 앞에 PFSP_ACCUM=2를 붙인다
 ```
 마지막에 출력되는 세 `epoch_log.csv`의 `epoch_time_s` 값(초)을 **계정 소유자에게 알려 준다.** 계정 소유자가 에폭 수(`PFSP_EPOCHS`)를 정해 준다.
 
@@ -55,6 +66,7 @@ tmux new -s pfsp
 cd ~/Bi-NCO-v4-pfsp
 conda activate <환경 이름>
 PFSP_EPOCHS=<E> GPU=0 bash run_v4.sh pfsp 2>&1 | tee pfsp_train.log
+# 24GB GPU라면: PFSP_EPOCHS=<E> PFSP_ACCUM=2 GPU=0 bash run_v4.sh pfsp 2>&1 | tee pfsp_train.log
 ```
 - 위 표의 13개 run이 P-T1부터 차례로 돈다(M0·M1의 seed 3개가 먼저).
 - tmux에서 빠져나오기: `Ctrl+b` 누른 뒤 `d` / 다시 들어가기: `tmux attach -t pfsp`

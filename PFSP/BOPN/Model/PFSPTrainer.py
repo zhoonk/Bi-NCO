@@ -230,10 +230,29 @@ class PFSPTrainer:
         return score_AM.avg, loss_AM.avg
 
     def _train_one_batch(self, batch_size):
+        # The batch can be processed in accum_steps micro-batches whose gradients are summed
+        # before one optimizer step. Every loss is a mean over instances, so weighting each
+        # micro-batch loss by its share of the batch gives the gradient of the whole batch.
+        accum = max(1, int(self.trainer_params.get('accum_steps', 1)))
+        sizes = [batch_size // accum + (1 if k < batch_size % accum else 0) for k in range(accum)]
+        sizes = [b for b in sizes if b > 0]
+
+        self.model.train()
+        self.model.zero_grad()
+        score_sum, loss_sum = 0.0, 0.0
+        for b in sizes:
+            score, loss = self._forward_backward(b, weight=b / batch_size)
+            score_sum += score * b
+            loss_sum += loss * b
+        self.grad_stats.add(self.model)
+        self.optimizer.step()
+
+        return score_sum / batch_size, loss_sum / batch_size
+
+    def _forward_backward(self, batch_size, weight):
 
         # Prep
         ###############################################
-        self.model.train()
         self.env.load_problems(batch_size)
         reset_state, _, _ = self.env.reset()
         self.model.pre_forward(reset_state)
@@ -259,12 +278,9 @@ class PFSPTrainer:
         max_pomo_reward, _ = reward.max(dim=1)  # get best results from pomo
         score_mean = -max_pomo_reward.float().mean()  # negative sign to make positive value
 
-        # Step & Return
+        # Backward (gradients accumulate over the micro-batches of one batch)
         ###############################################
-        self.model.zero_grad()
-        loss_mean.backward()
-        self.grad_stats.add(self.model)
-        self.optimizer.step()
+        (loss_mean * weight).backward()
 
         return score_mean.item(), loss_mean.item()
 
