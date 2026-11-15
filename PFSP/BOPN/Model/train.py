@@ -52,6 +52,8 @@ def parse_args():
     p.add_argument('--wandb_group', default=None, help='runs of the same experiment, e.g. A-T1')
     p.add_argument('--wandb_tags', nargs='*', default=None)
     p.add_argument('--debug', action='store_true', help='tiny CPU run for code checks')
+    p.add_argument('--resume_dir', default=None, help='result folder of an interrupted run to continue')
+    p.add_argument('--resume_epoch', type=int, default=None, help='checkpoint epoch in --resume_dir')
     return p.parse_args()
 
 
@@ -158,9 +160,9 @@ trainer_params = {
         'tags': args.wandb_tags,
     },
     'model_load': {
-        'enable': False,
-        'path': None,
-        'epoch': None,
+        'enable': args.resume_dir is not None,
+        'path': args.resume_dir,
+        'epoch': args.resume_epoch,
     }
 }
 

@@ -7,6 +7,8 @@
 #   best-of-128 (Bi-NCO):   --n_fwd 64 --n_bwd 64 --eval_type argmax
 #   best-of-128 (fwd-only): --n_fwd 128 --n_bwd 0
 #   M1+M2 ensemble:         --variant M1 --n_fwd 64 --n_bwd 0 --ckpt2_dir <M2> --ckpt2_epoch E --variant2 M2 --n_fwd2 0 --n_bwd2 64
+#   P-I6 (M1, machine-reversed pool): --variant M1 --n_fwd 64 --n_bwd 0 --reverse_machine_pool
+#                                     (64 on the instance + 64 on its machine-reversed copy)
 # Taillard files: --problems tai20x10_with_ub.pt --problems_key data --ref <same> --ref_key ub
 
 import argparse
@@ -43,6 +45,8 @@ def parse_args():
     p.add_argument('--variant2', default='M2')
     p.add_argument('--n_fwd2', type=int, default=0)
     p.add_argument('--n_bwd2', type=int, default=64)
+    p.add_argument('--reverse_machine_pool', action='store_true',
+                   help='also decode the instance with reversed machine order (doubles the candidates)')
     p.add_argument('--batch', type=int, default=50)
     p.add_argument('--seed', type=int, default=1234, help='seed for noise vectors z and sampling')
     p.add_argument('--cuda', type=int, default=0)
@@ -104,6 +108,7 @@ tester_params = {
     'augmentation_enable': False,   # test-time augmentation is not used (decision 2026-09-25)
     'aug_factor': 1,
     'clamp_negative': False,
+    'reverse_machine_pool': args.reverse_machine_pool,
 }
 
 if args.ckpt2_dir:

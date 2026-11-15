@@ -13,6 +13,9 @@ def build_model(**model_params):
         return PFSPModel(**model_params)
     if architecture == 'sedd':
         return PFSPModel_SEDD(**model_params)
+    if architecture == 'mpasil':
+        from PFSPModel_MPASIL import PFSPModel_MPASIL
+        return PFSPModel_MPASIL(**model_params)
     raise ValueError('unknown architecture {}'.format(architecture))
 
 

@@ -9,7 +9,7 @@ DEFAULTS = {
     'direction_mode': 'bi',        # 'bi' | 'fwd' | 'bwd'
     'decoder_wiring': 'exchange',  # 'exchange' | 'shared'  (the original PFSP code already uses 'exchange')
     'encoder_coupling': 'cross',   # 'cross': each stream attends to the other | 'self': to itself (M9)
-    'architecture': 'desd',        # 'desd': dual encoder streams (Bi-NCO) | 'sedd': single encoder, dual decoder projections
+    'architecture': 'desd',        # 'desd': dual encoder streams (Bi-NCO) | 'sedd': single encoder, dual decoder projections | 'mpasil': PFSPModel_MPASIL.py
     'pseudo_label': 'separate',    # 'separate' | 'global'
     'weighting': 'adaptive',       # 'adaptive' | 'uniform' | 'clipped'
     'clip_value': None,            # upper bound of alpha for 'clipped' (M8); must be given (--clip_value)
@@ -29,6 +29,8 @@ VARIANTS = {
     'M8': {'weighting': 'clipped'},                           # standardized weight clipped at clip_value
     'M9': {'encoder_coupling': 'self'},                       # uncoupled encoder streams (PFSP only)
     'SEDD': {'architecture': 'sedd'},                         # shared encoder + role-specific decoder heads (PFSP only)
+    'SEDD1': {'architecture': 'sedd', 'direction_mode': 'fwd'},  # SEDD trained forward-only (control for SEDD, as M1 for M0)
+    'MPASIL': {'architecture': 'mpasil', 'direction_mode': 'fwd'},  # MP-ASIL re-implemented from its paper (PFSP only)
 }
 
 

@@ -79,8 +79,19 @@ class PFSPTrainer:
             self.start_epoch = 1 + model_load['epoch']
             self.result_log.set_raw_data(checkpoint['result_log'])
             self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            self.scheduler.last_epoch = model_load['epoch']-1
-            self.logger.info('Saved Model Loaded !!')
+            if 'scheduler_state_dict' in checkpoint:
+                # last_epoch = the saved epoch, so the next step() gives the learning rate of the next
+                # epoch (setting last_epoch = epoch - 1 would apply a milestone at the saved epoch twice)
+                self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            else:
+                self.scheduler.last_epoch = model_load['epoch']-1
+            # a new random stream for the remaining epochs (the checkpoint holds no RNG state, and
+            # reseeding with the run seed would replay the instances of epoch 1)
+            if self.seed is not None:
+                set_seed(self.seed + 1000 * model_load['epoch'])
+            self._copy_logs(model_load['path'], model_load['epoch'])
+            self.logger.info('Saved Model Loaded !! resumed from {} at epoch {}, lr {}'.format(
+                checkpoint_fullname, model_load['epoch'], self.optimizer.param_groups[0]['lr']))
 
         # measurement
         self.grad_stats = GradStats()
@@ -97,6 +108,27 @@ class PFSPTrainer:
 
         # utility
         self.time_estimator = TimeEstimator()
+
+    def _copy_logs(self, src_folder, last_epoch):
+        """Copy the per-epoch logs of the interrupted run up to last_epoch into the new result folder,
+        so that epoch_log.csv and val_costs.csv cover the whole training (new rows are appended)."""
+        for name in ('epoch_log.csv', 'val_costs.csv'):
+            src = os.path.join(src_folder, name)
+            if not os.path.exists(src):
+                continue
+            with open(src, errors='replace') as f:
+                lines = f.read().splitlines()
+            keep = lines[:1] + [l for l in lines[1:] if self._epoch_of(l) is not None and self._epoch_of(l) <= last_epoch]
+            with open(os.path.join(self.result_folder, name), 'w') as f:
+                f.write('\n'.join(keep) + '\n')
+
+    @staticmethod
+    def _epoch_of(line):
+        # epoch of a log row, or None for a blank or damaged row (e.g. NUL bytes left by a crash)
+        try:
+            return int(float(line.split(',')[0]))
+        except ValueError:
+            return None
 
     def _load_validation(self, cfg):
         # cfg: {'enable', 'problems_path', 'problems_key', 'ref_path', 'ref_key', 'every', 'batch_size',

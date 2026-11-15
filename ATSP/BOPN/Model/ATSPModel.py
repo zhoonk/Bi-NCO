@@ -68,6 +68,12 @@ class BOPN_Model(nn.Module):
         if state.current_node is None:
             if self.start_mode == 'fixed':
                 selected = torch.zeros(size=(batch_size, sample_size), dtype=torch.long)
+            elif self.start_mode == 'all':
+                # POMO-style inference: within each direction, rollout j starts from city j mod node_cnt,
+                # so n_fwd = n_bwd = node_cnt uses every city exactly once per direction
+                selected = torch.zeros(size=(batch_size, sample_size), dtype=torch.long)
+                for _, lo, hi in self._parts():
+                    selected[:, lo:hi] = torch.arange(hi - lo, dtype=torch.long)[None, :] % self.node_cnt
             else:
                 selected = torch.randint(low=0, high=self.node_cnt, size=(batch_size, sample_size), dtype=torch.long)
             prob = torch.ones(size=(batch_size, sample_size))

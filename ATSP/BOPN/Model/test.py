@@ -36,7 +36,7 @@ def parse_args():
     p.add_argument('--n_fwd', type=int, default=100)
     p.add_argument('--n_bwd', type=int, default=100)
     p.add_argument('--eval_type', default='argmax', choices=['argmax', 'softmax'])
-    p.add_argument('--start_mode', default='random', choices=['random', 'fixed'])
+    p.add_argument('--start_mode', default='random', choices=['random', 'fixed', 'all'])
     p.add_argument('--transpose_pool', action='store_true')
     p.add_argument('--episodes', type=int, default=None)
     p.add_argument('--ckpt2_dir', default=None, help='second checkpoint for an ensemble (e.g. M2 with M1)')

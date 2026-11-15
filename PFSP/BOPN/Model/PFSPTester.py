@@ -94,6 +94,11 @@ class PFSPTester:
             best = self._best_cost(self.problems[lo:hi], aug_factor)
             if self.model2 is not None:
                 best = torch.minimum(best, self._best_cost(self.problems[lo:hi], aug_factor, self.model2, self.env2))
+            if self.tester_params.get('reverse_machine_pool'):
+                # P-I6: the same budget again on the instance with the machine order reversed.
+                # A permutation on the reversed instance has the makespan of the reversed
+                # permutation on the original one, so this pool adds backward-constructed candidates.
+                best = torch.minimum(best, self._best_cost(self.problems[lo:hi].flip(dims=(2,)).contiguous(), aug_factor))
             costs.append(best)
         if torch.cuda.is_available():
             torch.cuda.synchronize()
@@ -101,10 +106,13 @@ class PFSPTester:
         peak_mem = torch.cuda.max_memory_allocated() / 2**20 if torch.cuda.is_available() else float('nan')
         costs = torch.cat(costs).float()
 
-        candidates = (self.env.n_fwd + self.env.n_bwd + (self.env2.n_fwd + self.env2.n_bwd if self.env2 else 0)) * aug_factor
+        reverse_pool = bool(self.tester_params.get('reverse_machine_pool'))
+        candidates = (self.env.n_fwd + self.env.n_bwd + (self.env2.n_fwd + self.env2.n_bwd if self.env2 else 0)) * aug_factor \
+            * (2 if reverse_pool else 1)
         self.logger.info(' *** Test Done *** ')
-        self.logger.info(' instances: {}, candidates per instance: {} (n_fwd={}, n_bwd={}, aug={}), eval_type: {}'.format(
-                             costs.size(0), candidates, self.env.n_fwd, self.env.n_bwd, aug_factor,
+        self.logger.info(' instances: {}, candidates per instance: {} (n_fwd={}, n_bwd={}, aug={}, reverse_machine_pool={}), '
+                         'eval_type: {}'.format(
+                             costs.size(0), candidates, self.env.n_fwd, self.env.n_bwd, aug_factor, reverse_pool,
                              self.model_params['eval_type']))
         self.logger.info(' mean cost: {:.6f}'.format(float(costs.mean())))
         self.logger.info(' total time: {:.2f}s, peak GPU memory: {:.1f} MB'.format(elapsed, peak_mem))
