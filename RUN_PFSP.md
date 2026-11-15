@@ -95,7 +95,7 @@ PFSP_EPOCHS=<E> GPU=1 bash run_v4.sh pfsp P-T4 P-T5 P-T6 P-T10 P-T11 P-T14 2>&1 
   ```bash
   PFSP_EPOCHS=<E> GPU=0 bash run_v4.sh pfsp P-T8 P-T9 P-T10 P-T11 P-T13 P-T14 2>&1 | tee -a pfsp_train.log
   ```
-- 이어서 학습하는 기능은 없어서 실패한 run은 처음부터 다시 돈다. wandb에서는 실패한 run이 `crashed`로 표시되니 지우거나 무시한다.
+- 중단된 run은 `train.py`의 `--resume_dir <결과 폴더> --resume_epoch <체크포인트 에폭>`으로 마지막 체크포인트에서 이어 학습할 수 있다. 처음부터 다시 돌려도 된다. wandb에서는 실패한 run이 `crashed`로 표시되니 지우거나 무시한다.
 
 ## 7. M8 (P-T12) — 계정 소유자가 요청할 때만
 
