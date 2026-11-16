@@ -1,0 +1,7 @@
+# Versions used for the experiments in the paper (Python 3.12, CUDA 12.4)
+torch==2.4.1
+numpy==1.26.4
+pandas
+matplotlib
+pytz
+wandb  # optional, for --wandb logging

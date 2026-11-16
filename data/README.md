@@ -1,6 +1,6 @@
 # Data for the v4 experiments
 
-`run_v4.sh` reads the validation (and test) files from here by default.
+The commands in the top-level `README.md` read the validation and test files from here.
 The validation curves use the test sets; no checkpoint is selected with them
 (the last epoch is always used).
 
@@ -8,10 +8,10 @@ The validation curves use the test sets; no checkpoint is selected with them
 
 | File | Content |
 |---|---|
-| `problems100.pt` | ATSP100 instances, tensor of shape (1000, 100, 100): the first 1000 instances of the original `ATSP100.pth` (10000 instances), i.e. the instances covered by the LKH results. The first 200 are the test set of the paper and are used for validation (`--val_max 200`). |
+| `problems100.pt` | ATSP100 instances, tensor of shape (1000, 100, 100): the first 1000 instances of the original `ATSP100.pth` (10000 instances), i.e. the instances covered by the LKH results. The first 200 are the test set of the paper and are used for validation (`--val_max 200`, the default). |
 | `lkh_result100.csv` | LKH results for the first 1000 instances, same order: column `cost_orig` (tour length) and `t0`..`t99` (tour). Other column names: set `ATSP_VAL_REF_KEY`. |
-| `problems200.pt`, `lkh_result200.csv` | ATSP200 test set (inference only) |
-| `problems500.pt`, `lkh_result500.csv` | ATSP500 test set (inference only) |
+| `problems200.pt`, `lkh_result200.csv` | ATSP200 test set (200 instances, inference only), column `Length`; download from the release (too large for git) |
+| `problems500.pt`, `lkh_result500.csv` | ATSP500 test set (200 instances, inference only), column `Length`; download from the release |
 
 ## PFSP (`data/PFSP/`)
 
@@ -19,12 +19,9 @@ Created by `PFSP/BOPN/Model/make_val_data.py --benchmark_dir <dir with taiJxM.np
 
 | File | Content |
 |---|---|
-| `val_random20x10.pt` | Validation set for the training curves: 200 random 20x10 instances from the training distribution (processing times uniform on {1,...,99}, fixed seed 20261001), dict with `data` (200, 20, 10) and `lb` (Taillard lower bounds) |
+| `val_random20x10.pt`, `val_random20x5.pt` | Validation sets for the training curves: 200 random 20x10 (20x5) instances from the training distribution (processing times uniform on {1,...,99}, fixed seed 20261001), dict with `data` (200, 20, 10) and `lb` (Taillard lower bounds) |
 | `taiJxM.pt` | Taillard instances (J jobs, M machines): `data` (10, J, M), `ub` (best-known upper bounds), `lb` (Taillard lower bounds). Used for the final evaluation |
 
 The lower bound is that of Taillard (1993). It matches the published bounds of ta001-ta010 and is at most the best-known upper bound on every instance.
-
-Other paths can be used without moving files, e.g.
-`ATSP_VAL=/path/problems100.pt ATSP_VAL_REF=/path/lkh_result100.csv bash run_v4.sh atsp`.
 
 Other instance files (`*.pt`, `*.pth`) are not tracked by git (`data/.gitignore`); `ATSP/problems100.pt` (38 MB) is the only exception.

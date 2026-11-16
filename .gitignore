@@ -1,4 +1,3 @@
-cat > .gitignore <<'EOF'
 # Python cache
 __pycache__/
 *.py[cod]
@@ -24,4 +23,6 @@ ENV/
 # Results folder (anywhere)
 result/
 **/result/
-EOF
+
+# released model weights (seed 0) are tracked
+!checkpoints/**/*.pt
