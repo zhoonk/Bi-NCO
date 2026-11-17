@@ -5,6 +5,7 @@
 # results can be reported separately (reviewer comment IA-R1-C9):
 #   greedy (one candidate): --n_fwd 1 --n_bwd 0 --eval_type argmax --start_mode fixed
 #   best-of-200 (Bi-NCO):   --n_fwd 100 --n_bwd 100 --eval_type argmax
+#   Table 3 (k = M):        --n_fwd M/2 --n_bwd M/2 --start_mode random_distinct
 #   best-of-200 (fwd-only): --n_fwd 200 --n_bwd 0
 #   M1+M2 ensemble:         --variant M1 --n_fwd 100 --n_bwd 0 --ckpt2_dir <M2> --ckpt2_epoch E --variant2 M2 --n_fwd2 0 --n_bwd2 100
 #   M4 at test time:        --n_fwd 100 --n_bwd 0 --transpose_pool   (100 on D + 100 on D^T)
@@ -36,7 +37,7 @@ def parse_args():
     p.add_argument('--n_fwd', type=int, default=100)
     p.add_argument('--n_bwd', type=int, default=100)
     p.add_argument('--eval_type', default='argmax', choices=['argmax', 'softmax'])
-    p.add_argument('--start_mode', default='random', choices=['random', 'fixed', 'all'])
+    p.add_argument('--start_mode', default='random', choices=['random', 'fixed', 'all', 'random_distinct'])
     p.add_argument('--transpose_pool', action='store_true')
     p.add_argument('--episodes', type=int, default=None)
     p.add_argument('--ckpt2_dir', default=None, help='second checkpoint for an ensemble (e.g. M2 with M1)')

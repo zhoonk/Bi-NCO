@@ -89,13 +89,16 @@ python train.py --variant M0 --epochs 5000 --seed 0 \
   --val_problems ../../../data/ATSP/problems100.pt \
   --val_ref ../../../data/ATSP/lkh_result100.csv --val_ref_key cost_orig --val_every 10
 
-# evaluation on 200 instances with M cities (Table 3): one rollout from every start city in each direction (k = 2M)
+# evaluation on 200 instances with M cities (Table 3): M/2 rollouts per direction, start cities drawn at random
+# without replacement within each direction (k = M)
 python test.py --variant M0 --ckpt_dir result/<run> --ckpt_epoch 5000 --node_cnt M --episodes 200 \
   --problems ../../../data/ATSP/problemsM.pt --ref ../../../data/ATSP/lkh_resultM.csv --ref_key <cost_orig for 100, Length for 200 and 500> \
-  --n_fwd M --n_bwd M --start_mode all --batch 10 --seed 1234
+  --n_fwd <M/2> --n_bwd <M/2> --start_mode random_distinct --batch 10 --seed 1234   # --batch 1 for M = 500
 # greedy (G): --n_fwd 1 --n_bwd 0 --start_mode fixed
-# forward-only model on the cost matrix and its transpose (Section V-C1):
-#   --variant M1 --n_fwd 100 --n_bwd 0 --start_mode all --transpose_pool
+# Section V-C1 (ATSP100, 100 candidates each):
+#   forward-only model, every city as start city:        --variant M1 --n_fwd 100 --n_bwd 0 --start_mode all
+#   Bi-NCO decoded forward only:                          --variant M0 --n_fwd 100 --n_bwd 0 --start_mode all
+#   forward-only model on the cost matrix and transpose:  --variant M1 --n_fwd 50 --n_bwd 0 --start_mode random_distinct --transpose_pool
 ```
 
 ## Checkpoints and results
@@ -108,7 +111,7 @@ python test.py --variant M0 --ckpt_dir ../../../checkpoints/pfsp20x10_seed0 --ck
   --job 20 --machine 10 --n_fwd 64 --n_bwd 64 --batch 10 --seed 1234     # mean UB gap 0.79%
 ```
 
-and from `ATSP/BOPN/Model` with `--ckpt_dir ../../../checkpoints/atsp100_seed0 --ckpt_epoch 5000` (LKH gap 1.54% on ATSP100 with `--n_fwd 100 --n_bwd 100 --start_mode all`).
+and from `ATSP/BOPN/Model` with `--ckpt_dir ../../../checkpoints/atsp100_seed0 --ckpt_epoch 5000` (LKH gap 1.79% on ATSP100 with `--n_fwd 50 --n_bwd 50 --start_mode random_distinct --seed 1234`).
 
 The release of this version contains the seed-1 and seed-2 models of the PFSP settings (the tables report the mean over seeds 0, 1, and 2), the per-instance results (`per_instance.csv`) of the evaluations in the paper, and the ATSP200/500 test sets with their LKH results.
 

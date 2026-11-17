@@ -42,7 +42,7 @@ class BOPN_Model(nn.Module):
         if self.wiring not in self.WIRING:
             raise ValueError('unknown decoder_wiring {}'.format(self.wiring))
         self.use_dir_token = (self.wiring == 'shared')
-        self.start_mode = model_params.get('start_mode', 'random')  # 'random' | 'fixed'
+        self.start_mode = model_params.get('start_mode', 'random')  # 'random' | 'fixed' | 'all' | 'random_distinct'
         self.cross_encoder = Cross_Encoder(**model_params)
         self.decoder = Decoder(**model_params)
         self.encoded = {}
@@ -74,6 +74,14 @@ class BOPN_Model(nn.Module):
                 selected = torch.zeros(size=(batch_size, sample_size), dtype=torch.long)
                 for _, lo, hi in self._parts():
                     selected[:, lo:hi] = torch.arange(hi - lo, dtype=torch.long)[None, :] % self.node_cnt
+            elif self.start_mode == 'random_distinct':
+                # within each direction, the start cities of an instance are drawn at random without
+                # replacement (a random permutation of the cities, cycled if n_d > node_cnt)
+                selected = torch.zeros(size=(batch_size, sample_size), dtype=torch.long)
+                for _, lo, hi in self._parts():
+                    perm = torch.rand(batch_size, self.node_cnt).argsort(dim=1)
+                    idx = torch.arange(hi - lo, dtype=torch.long) % self.node_cnt
+                    selected[:, lo:hi] = perm[:, idx]
             else:
                 selected = torch.randint(low=0, high=self.node_cnt, size=(batch_size, sample_size), dtype=torch.long)
             prob = torch.ones(size=(batch_size, sample_size))
